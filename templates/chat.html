@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat with {{ reviewer.name }} - NeuralFeedback</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="min-h-screen bg-gradient-dark flex flex-col">
+        <!-- Header -->
+        <div class="chat-header">
+            <a href="{{ url_for('home') }}" class="btn-back">← Back</a>
+            <div class="reviewer-header-info">
+                <div class="avatar-small">{{ reviewer.name[0] }}</div>
+                <div>
+                    <h2 class="reviewer-name-header">{{ reviewer.name }}</h2>
+                    <p class="reviewer-profession-header">{{ reviewer.profession }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Messages Area -->
+        <div class="chat-messages" id="chatMessages">
+            <div class="message message-ai">
+                <div class="message-content">
+                    <p>Hello! I've reviewed your idea. What would you like to know more about?</p>
+                </div>
+            </div>
+            <div class="message message-user">
+                <div class="message-content">
+                    <p>What do you think of my idea?</p>
+                </div>
+            </div>
+            <div class="message message-ai">
+                <div class="message-content">
+                    <p>I think it's innovative but could use clarity on target market. The core concept is solid, but defining your ideal customer persona would strengthen the value proposition significantly.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="chat-input-container">
+            <form class="chat-form" id="chatForm">
+                <input 
+                    type="text" 
+                    id="messageInput" 
+                    class="chat-input" 
+                    placeholder="Type your message..."
+                    autocomplete="off"
+                >
+                <button type="submit" class="btn-send">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='scripts.js') }}"></script>
+</body>
+</html>
+

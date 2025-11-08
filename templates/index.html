@@ -3,129 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NeuralFeedback - Review Generator</title>
+    <title>NeuralFeedback - AI Review Platform</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <div class="container">
-        <h1>NeuralFeedback</h1>
-        
-        <div class="input-group">
-            <label for="textInput">Text Input</label>
-            <textarea id="textInput" placeholder="Enter your text here..."></textarea>
-        </div>
+    <div class="min-h-screen bg-gradient-dark flex items-center justify-center p-4">
+        <div class="glass-card max-w-2xl w-full">
+            <h1 class="title">NeuralFeedback</h1>
+            
+            <form method="POST" action="{{ url_for('generate') }}" class="form-container">
+                <div class="input-group">
+                    <label for="text_input" class="label">Text Input</label>
+                    <textarea 
+                        id="text_input" 
+                        name="text_input" 
+                        class="textarea"
+                        placeholder="Describe your product idea or business concept here..."
+                        required
+                    ></textarea>
+                </div>
 
-        <div class="slider-container">
-            <label for="reviewCount">Number of Reviews: <span class="slider-value" id="reviewCountValue">5</span></label>
-            <div class="slider-wrapper">
-                <input type="range" id="reviewCount" class="slider" min="1" max="20" value="5">
-            </div>
-        </div>
+                <div class="slider-group">
+                    <label for="num_reviewers" class="label">
+                        Number of Reviewers: <span class="slider-value" id="sliderValue">5</span>
+                    </label>
+                    <div class="slider-wrapper">
+                        <input 
+                            type="range" 
+                            id="num_reviewers" 
+                            name="num_reviewers" 
+                            class="slider"
+                            min="1" 
+                            max="10" 
+                            value="5"
+                        >
+                    </div>
+                </div>
 
-        <button class="button" id="generateButton" onclick="handleSubmit()">Generate</button>
-
-        <div class="error" id="error"></div>
-
-        <div class="output" id="output">
-            <h2>Output</h2>
-            <div class="output-content" id="outputContent"></div>
+                <button type="submit" class="btn-primary">
+                    Generate Feedback
+                </button>
+            </form>
         </div>
     </div>
 
-    <script>
-        const reviewCountSlider = document.getElementById('reviewCount');
-        const reviewCountValue = document.getElementById('reviewCountValue');
-        const textInput = document.getElementById('textInput');
-        const output = document.getElementById('output');
-        const outputContent = document.getElementById('outputContent');
-        const errorDiv = document.getElementById('error');
-        const generateButton = document.getElementById('generateButton');
-
-        // Update slider value displays
-        reviewCountSlider.addEventListener('input', function() {
-            reviewCountValue.textContent = this.value;
-        });
-
-        async function handleSubmit() {
-            const text = textInput.value;
-            const numReviews = parseInt(reviewCountSlider.value);
-
-            if (!text.trim()) {
-                showError('Please enter some text first!');
-                return;
-            }
-
-            // Hide previous output and error
-            output.classList.remove('show');
-            errorDiv.classList.remove('show');
-
-            // Disable button and show loading state
-            generateButton.disabled = true;
-            generateButton.textContent = 'Generating...';
-
-            try {
-                const response = await fetch('/generate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        text: text,
-                        numReviews: numReviews
-                    })
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    let errorMsg = data.error || 'An error occurred';
-                    if (data.details && data.details.length > 0) {
-                        errorMsg += '\n\nDetails:\n' + data.details.join('\n');
-                    }
-                    throw new Error(errorMsg);
-                }
-
-                // Display the results
-                let result = `<strong>Input Text:</strong> ${escapeHtml(data.inputText)}<br><br>`;
-                result += `<strong>Generated Reviews:</strong> ${data.successCount} of ${data.numReviews}<br><br>`;
-                
-                if (data.reviews && data.reviews.length > 0) {
-                    data.reviews.forEach((reviewItem, index) => {
-                        result += `<div style="margin-bottom: 20px; padding: 15px; background: #333333; border-radius: 8px; border-left: 3px solid #ffffff;">`;
-                        result += `<strong style="color: #ffffff;">Review ${reviewItem.index}:</strong><br>`;
-                        result += `<div style="color: #cccccc; margin-top: 10px; line-height: 1.6;">${escapeHtml(reviewItem.review)}</div>`;
-                        result += `</div>`;
-                    });
-                }
-                
-                if (data.errors && data.errors.length > 0) {
-                    result += `<div style="margin-top: 15px; color: #ff6b6b;"><strong>Errors:</strong><br>`;
-                    data.errors.forEach(error => {
-                        result += `• ${escapeHtml(error)}<br>`;
-                    });
-                    result += `</div>`;
-                }
-
-                outputContent.innerHTML = result;
-                output.classList.add('show');
-            } catch (error) {
-                showError(error.message || 'An error occurred while processing your request.');
-            } finally {
-                generateButton.disabled = false;
-                generateButton.textContent = 'Generate';
-            }
-        }
-
-        function showError(message) {
-            errorDiv.textContent = message;
-            errorDiv.classList.add('show');
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    </script>
+    <script src="{{ url_for('static', filename='scripts.js') }}"></script>
 </body>
 </html>
