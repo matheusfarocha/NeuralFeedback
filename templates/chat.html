@@ -20,40 +20,72 @@
             </div>
         </div>
 
-        <!-- Messages Area -->
-        <div class="chat-messages" id="chatMessages">
-            <div class="message message-ai">
-                <div class="message-content">
-                    <p>Hello! I've reviewed your idea. What would you like to know more about?</p>
+        <div class="chat-content">
+            <div class="chat-panel">
+                <!-- Messages Area -->
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message message-ai">
+                        <div class="message-content">
+                            <p>Hello! I've reviewed your idea. What would you like to know more about?</p>
+                        </div>
+                    </div>
+                    <div class="message message-user">
+                        <div class="message-content">
+                            <p>What do you think of my idea?</p>
+                        </div>
+                    </div>
+                    <div class="message message-ai">
+                        <div class="message-content">
+                            <p>I think it's innovative but could use clarity on target market. The core concept is solid, but defining your ideal customer persona would strengthen the value proposition significantly.</p>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div class="message message-user">
-                <div class="message-content">
-                    <p>What do you think of my idea?</p>
-                </div>
-            </div>
-            <div class="message message-ai">
-                <div class="message-content">
-                    <p>I think it's innovative but could use clarity on target market. The core concept is solid, but defining your ideal customer persona would strengthen the value proposition significantly.</p>
-                </div>
-            </div>
-        </div>
 
-        <!-- Input Area -->
-        <div class="chat-input-container">
-            <form class="chat-form" id="chatForm">
-                <input 
-                    type="text" 
-                    id="messageInput" 
-                    class="chat-input" 
-                    placeholder="Type your message..."
-                    autocomplete="off"
-                >
-                <button type="submit" class="btn-send">Send</button>
-            </form>
+                <!-- Input Area -->
+                <div class="chat-input-container">
+                    <form class="chat-form" id="chatForm">
+                        <input
+                            type="text"
+                            id="messageInput"
+                            class="chat-input"
+                            placeholder="Type your message..."
+                            autocomplete="off"
+                        >
+                        <button type="submit" class="btn-send">Send</button>
+                    </form>
+                </div>
+            </div>
+
+            <aside class="feedback-sidebar" id="feedbackSidebar">
+                <div class="feedback-card">
+                    <div class="feedback-card-header">
+                        <h3>Feedback Dashboard</h3>
+                    </div>
+                    <div class="feedback-items" id="feedback-dashboard-list">
+                        {% for item in feedback_items %}
+                            <label class="feedback-item" data-item="{{ item }}">
+                                <input type="checkbox" class="feedback-checkbox" data-text="{{ item }}" value="{{ item }}">
+                                <span>{{ item }}</span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                    <div class="feedback-footer">
+                        <button
+                            id="applyButton"
+                            type="button"
+                            class="btn-apply-feedback w-full mt-4 py-2 px-4 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl hover:shadow-[0_0_15px_rgba(139,92,246,0.7)] transition"
+                        >
+                            Apply Changes
+                        </button>
+                    </div>
+                </div>
+            </aside>
         </div>
     </div>
 
+    <script id="initial-feedback-items" type="application/json">
+        {{ feedback_items | tojson | safe }}
+    </script>
     <script src="{{ url_for('static', filename='scripts.js') }}"></script>
 </body>
 </html>
