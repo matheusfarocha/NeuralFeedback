@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuralFeedback - Review Generator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>NeuralFeedback</h1>
+        
+        <div class="input-group">
+            <label for="textInput">Text Input</label>
+            <textarea id="textInput" placeholder="Enter your text here..."></textarea>
+        </div>
+
+        <div class="slider-container">
+            <label for="reviewCount">Number of Reviews: <span class="slider-value" id="reviewCountValue">5</span></label>
+            <div class="slider-wrapper">
+                <input type="range" id="reviewCount" class="slider" min="1" max="20" value="5">
+            </div>
+        </div>
+
+        <button class="button" id="generateButton" disabled>Generate</button>
+
+        <div class="error" id="error"></div>
+
+        <div class="output" id="output">
+            <h2>Output</h2>
+            <div class="output-content" id="outputContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const reviewCountSlider = document.getElementById('reviewCount');
+        const reviewCountValue = document.getElementById('reviewCountValue');
+        const textInput = document.getElementById('textInput');
+        const output = document.getElementById('output');
+        const outputContent = document.getElementById('outputContent');
+        const errorDiv = document.getElementById('error');
+        const generateButton = document.getElementById('generateButton');
+
+        // Update slider value displays
+        reviewCountSlider.addEventListener('input', function() {
+            reviewCountValue.textContent = this.value;
+        });
+
+        async function handleSubmit() {
+            const text = textInput.value;
+            const numReviews = parseInt(reviewCountSlider.value);
+
+            if (!text.trim()) {
+                showError('Please enter some text first!');
+                return;
+            }
+
+            // Hide previous output and error
+            output.classList.remove('show');
+            errorDiv.classList.remove('show');
+
+            // Disable button and show loading state
+            generateButton.disabled = true;
+            generateButton.textContent = 'Generating...';
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        numReviews: numReviews
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'An error occurred');
+                }
+
+                // Display the results
+                let result = `<strong>Input Text:</strong> ${escapeHtml(data.inputText)}<br><br>`;
+                result += `<strong>Number of Reviews:</strong> ${data.numReviews}<br><br>`;
+                result += `<strong>Configuration:</strong> ${data.message}`;
+
+                outputContent.innerHTML = result;
+                output.classList.add('show');
+            } catch (error) {
+                showError(error.message || 'An error occurred while processing your request.');
+            } finally {
+                generateButton.disabled = false;
+                generateButton.textContent = 'Generate';
+            }
+        }
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
