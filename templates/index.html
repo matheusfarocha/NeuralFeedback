@@ -222,7 +222,15 @@
 
                 // Display the results
                 let result = `<strong>Product Concept:</strong> ${escapeHtml(data.inputText)}<br><br>`;
-                result += `<strong>Customer Feedback Responses:</strong> ${data.successCount} of ${data.numReviews}<br><br>`;
+
+                // Calculate average rating
+                let averageRating = 0;
+                if (data.reviews && data.reviews.length > 0) {
+                    const totalRating = data.reviews.reduce((sum, review) => sum + review.metadata.sentiment_rating, 0);
+                    averageRating = (totalRating / data.reviews.length).toFixed(1);
+                }
+
+                result += `<strong>Average Rating:</strong> ${averageRating}/10<br><br>`;
 
                 if (data.reviews && data.reviews.length > 0) {
                     result += `<div class="reviews-grid">`;
