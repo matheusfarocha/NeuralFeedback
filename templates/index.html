@@ -183,6 +183,13 @@
                         result += `<div style="margin-bottom: 20px; padding: 15px; background: #333333; border-radius: 8px; border-left: 3px solid #ffffff;">`;
                         result += `<strong style="color: #ffffff;">Review ${reviewItem.index}:</strong><br>`;
                         result += `<div style="color: #cccccc; margin-top: 10px; line-height: 1.6;">${escapeHtml(reviewItem.review)}</div>`;
+                        
+                        // Add original probability in gray text at bottom right
+                        if (reviewItem.metadata && reviewItem.metadata.original_sentiment_probability !== undefined) {
+                            const originalProb = reviewItem.metadata.original_sentiment_probability;
+                            result += `<div style="text-align: right; margin-top: 10px; color: #888888; font-size: 0.9em;">Original: ${originalProb.toFixed(3)}</div>`;
+                        }
+                        
                         result += `</div>`;
                     });
                 }
