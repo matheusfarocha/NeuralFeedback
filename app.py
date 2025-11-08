@@ -15,6 +15,8 @@ from neuralseek_client import (
     create_dummy_reviewer,
     generate_reviewers,
 )
+import google.generativeai as genai
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,254 +27,262 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret')
 # Load Gemini API key from environment variables
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-# Configure Gemini API when available
-if genai and GEMINI_API_KEY:
+# Configure Gemini API
+if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+
+# Define intensity levels for characteristic variations
+INTENSITY_LEVELS = [0.9, 1.0, 1.1]  # 90%, 100%, 110%
+
+# Available characteristics for users to select
+AVAILABLE_CHARACTERISTICS = [
+    "analytical",
+    "creative",
+    "practical",
+    "emotional",
+    "skeptical",
+    "optimistic",
+    "detail-oriented",
+    "impulsive",
+    "cautious",
+    "adventurous"
+]
 
 @app.route('/')
 def home():
     """Render the main page"""
-    return render_template('index.html')
+    return render_template('index.html', characteristics=AVAILABLE_CHARACTERISTICS)
 
-@app.route('/index')
-def index():
-    """Alias for home route"""
-    return render_template('index.html')
+def generate_review(prompt, selected_characteristics, characteristic_intensities, age_min=None, age_max=None, gender=None, location=None):
+    """
+    Generate customer feedback using Gemini API with selected persona characteristics.
+    All feedback responses have the same characteristics but with different intensity combinations.
 
+    Args:
+        prompt: The product idea/concept to get feedback on
+        selected_characteristics: List of characteristic names selected by user
+        characteristic_intensities: Dict mapping each characteristic to its intensity (0.9, 1.0, or 1.1)
+        age_min, age_max, gender, location: Demographic parameters for the customer persona
 
-@app.route('/generate', methods=['GET', 'POST'])
-def generate():
-    """Handle form submission and generate multiple reviews using NeuralSeek API"""
-    if request.method == 'GET':
-        stored_reviewers = session.get('reviewers')
-        if not stored_reviewers:
-            return redirect(url_for('home'))
+    Returns:
+        Tuple of (review_data, error) where review_data contains feedback text and persona metadata
+    """
+    if not GEMINI_API_KEY:
+        return None, "Gemini API key not configured"
 
-        text = session.get('product_description', '')
-        return render_template('reviews.html', reviewers=stored_reviewers, text=text)
+    if not selected_characteristics:
+        return None, "No characteristics selected"
 
-    # Support both form data and JSON
-    if request.is_json:
-        data = request.get_json(silent=True) or {}
-        text = data.get('text', '').strip()
-        num_reviews = int(data.get('numReviews', session.get('num_reviewers', 5)))
+    # Intensity modifier descriptions
+    intensity_descriptions = {
+        0.9: "somewhat",
+        1.0: "moderately",
+        1.1: "very"
+    }
+
+    # Build the personality description with intensities
+    personality_parts = []
+    for char in selected_characteristics:
+        intensity = characteristic_intensities.get(char, 1.0)
+        intensity_modifier = intensity_descriptions.get(intensity, "moderately")
+        personality_parts.append(f"{intensity_modifier} {char}")
+
+    # Combine characteristics
+    if len(personality_parts) == 1:
+        personality = personality_parts[0]
+    elif len(personality_parts) == 2:
+        personality = f"{personality_parts[0]} and {personality_parts[1]}"
     else:
-        text = request.form.get('text_input', '').strip()
-        num_reviews = int(request.form.get('num_reviewers', session.get('num_reviewers', 5)))
+        personality = ", ".join(personality_parts[:-1]) + f", and {personality_parts[-1]}"
+
+    # Build context string if any context is provided
+    context_parts = []
+    if age_min and age_max:
+        if age_min == age_max:
+            context_parts.append(f"age {age_min}")
+        else:
+            context_parts.append(f"age {age_min}-{age_max}")
+    elif age_min:
+        context_parts.append(f"age {age_min}+")
+    elif age_max:
+        context_parts.append(f"age up to {age_max}")
+    if gender:
+        context_parts.append(f"gender {gender}")
+    if location:
+        context_parts.append(f"from {location}")
+    
+    # Build the full context string
+    if context_parts:
+        reviewer_context = f"a potential customer who is {personality}, {', '.join(context_parts)}"
+    else:
+        reviewer_context = f"a potential customer who is {personality}"
+    
+    # Create the prompt for Gemini
+    gemini_prompt = f"""You are a potential customer being presented with a product idea. The product concept is: {prompt}
+
+You are {reviewer_context}.
+
+Please share your honest thoughts and feedback about this product idea. Provide declarative statements about what you think - do NOT ask questions. Explain what appeals to you or concerns you about this concept. Keep your response natural, authentic, and demonstrate your personality traits in your writing style and tone. Provide 2-4 sentences of genuine feedback.
+
+After your feedback, on a new line, provide a rating from 1-10 indicating how positive you feel about this product idea (1 = very negative/would never buy, 10 = very positive/would definitely buy). Format the rating EXACTLY as: RATING: X
+
+Example format:
+[Your 2-4 sentences of feedback here]
+RATING: 7"""
+    
+    try:
+        # Use gemini-2.0-flash-exp directly
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+
+        # Generate the review
+        response = model.generate_content(gemini_prompt)
+
+        # Extract the review text
+        full_response = response.text.strip()
+
+        # Extract rating from response
+        import re
+        rating_match = re.search(r'RATING:\s*(\d+)', full_response, re.IGNORECASE)
+
+        if rating_match:
+            rating = int(rating_match.group(1))
+            # Clamp rating between 1 and 10
+            rating = max(1, min(10, rating))
+            # Remove the rating line from the feedback text
+            review_text = re.sub(r'\s*RATING:\s*\d+\s*$', '', full_response, flags=re.IGNORECASE).strip()
+        else:
+            # If no rating found, default to neutral (5)
+            rating = 5
+            review_text = full_response
+
+        # Calculate average intensity for display
+        avg_intensity = sum(characteristic_intensities.values()) / len(characteristic_intensities)
+
+        # Create metadata for this review
+        metadata = {
+            'characteristics': selected_characteristics,
+            'characteristic_intensities': characteristic_intensities,
+            'avg_intensity': avg_intensity,
+            'avg_intensity_label': f"{int(avg_intensity * 100)}%",
+            'sentiment_rating': rating,
+            'personality_description': personality,
+            'age_range': f"{age_min}-{age_max}" if age_min and age_max else None,
+            'gender': gender if gender else None,
+            'location': location if location else None
+        }
+
+        review_data = {
+            'text': review_text,
+            'metadata': metadata
+        }
+
+        return review_data, None
+
+    except Exception as e:
+        return None, f"Error generating review: {str(e)}"
+
+
+@app.route('/generate', methods=['POST'])
+def generate():
+    """Handle form submission and generate customer feedback from multiple AI personas using Gemini API with multi-threading"""
+    data = request.get_json()
+
+    text = data.get('text', '').strip()
+    num_reviews = int(data.get('numReviews', 5))
+    age_min = data.get('ageMin')
+    age_max = data.get('ageMax')
+    gender = data.get('gender', '').strip()
+    location = data.get('location', '').strip()
+    selected_characteristics = data.get('characteristics', [])
 
     if not text:
-        if request.is_json:
-            return jsonify({'error': 'Please enter some text first!'}), 400
-        return redirect(url_for('home'))
+        return jsonify({'error': 'Please enter a product idea first!'}), 400
 
-    if not NEURALSEEK_API_KEY:
-        app.logger.warning("NeuralSeek API key not configured; using dummy reviewers.")
+    if not selected_characteristics:
+        return jsonify({'error': 'Please select at least one characteristic for your customer personas!'}), 400
 
-    try:
-        reviewers = generate_reviewers(text, num_reviews)
-    except Exception as exc:  # pragma: no cover - defensive
-        app.logger.error("Error generating reviewers: %s", exc)
-        limit = min(num_reviews, len(REVIEWER_PERSONAS))
-        reviewers = [create_dummy_reviewer(REVIEWER_PERSONAS[i]) for i in range(limit)]
+    if not GEMINI_API_KEY:
+        return jsonify({'error': 'Gemini API key not configured'}), 500
 
-    session['product_description'] = text
-    session['num_reviewers'] = num_reviews
-    session['reviewers'] = reviewers
-    session['feedback_items'] = []
-    session.modified = True
+    reviews = []
+    errors = []
 
-    if request.is_json:
-        result = {
-            'inputText': text,
-            'numReviews': num_reviews,
-            'reviews': reviewers,
-            'successCount': len(reviewers),
-            'errorCount': 0,
-            'errors': None,
+    # Create tasks for multi-threaded generation
+    # Each review has the same characteristics but with different intensity combinations
+    tasks = []
+    for i in range(num_reviews):
+        # Create intensity mapping for each characteristic
+        # Each characteristic gets its own intensity, cycling through levels
+        characteristic_intensities = {}
+        for j, char in enumerate(selected_characteristics):
+            # Vary intensities across characteristics and reviews
+            intensity_index = (i + j) % len(INTENSITY_LEVELS)
+            characteristic_intensities[char] = INTENSITY_LEVELS[intensity_index]
+
+        tasks.append({
+            'index': i,
+            'prompt': text,
+            'selected_characteristics': selected_characteristics,
+            'characteristic_intensities': characteristic_intensities,
+            'age_min': age_min,
+            'age_max': age_max,
+            'gender': gender,
+            'location': location
+        })
+
+    # Execute API calls in parallel using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(10, num_reviews)) as executor:
+        # Submit all tasks
+        future_to_task = {
+            executor.submit(
+                generate_review,
+                task['prompt'],
+                task['selected_characteristics'],
+                task['characteristic_intensities'],
+                task['age_min'],
+                task['age_max'],
+                task['gender'],
+                task['location']
+            ): task for task in tasks
         }
-        return jsonify(result)
 
-    return render_template('reviews.html', reviewers=reviewers, text=text)
+        # Collect results as they complete
+        for future in as_completed(future_to_task):
+            task = future_to_task[future]
+            try:
+                review_data, error = future.result()
 
-@app.route('/chat/<int:reviewer_id>')
-def chat(reviewer_id):
-    """Render chat page for a specific reviewer"""
-    # Get reviewer info from personas
-    if 1 <= reviewer_id <= len(REVIEWER_PERSONAS):
-        persona = REVIEWER_PERSONAS[reviewer_id - 1]
-        reviewer = {
-            "id": reviewer_id,
-            "name": persona["name"],
-            "profession": persona["profession"]
-        }
-    else:
-        reviewer = {
-            "id": reviewer_id,
-            "name": "Reviewer",
-            "profession": "Expert"
-        }
-    
-    feedback_items = session.get('feedback_items', [])
-    return render_template('chat.html', reviewer=reviewer, reviewer_id=reviewer_id, feedback_items=feedback_items)
+                if review_data:
+                    reviews.append({
+                        'index': task['index'] + 1,
+                        'review': review_data['text'],
+                        'metadata': review_data['metadata'],
+                        'prompt': text
+                    })
+                else:
+                    errors.append(f"Review {task['index'] + 1}: {error}")
+            except Exception as e:
+                errors.append(f"Review {task['index'] + 1}: Unexpected error - {str(e)}")
 
-@app.route('/chat/<int:reviewer_id>/message', methods=['POST'])
-def chat_message(reviewer_id):
-    """Handle chat messages and return AI response"""
-    data = request.get_json()
-    user_message = data.get('message', '').strip()
-    
-    if not user_message:
-        return jsonify({'error': 'Message is required'}), 400
-    
-    # Get reviewer persona
-    if 1 <= reviewer_id <= len(REVIEWER_PERSONAS):
-        persona = REVIEWER_PERSONAS[reviewer_id - 1]
-    else:
-        persona = REVIEWER_PERSONAS[0]  # Default to first persona
-    
-    # Build conversation payload for NeuralSeek
-    messages = [
-        {"role": "system", "content": persona["persona"]},
-        {"role": "user", "content": user_message},
-    ]
+    # Sort reviews by index to maintain order
+    reviews.sort(key=lambda x: x['index'])
 
-    response_text = None
-    if NEURALSEEK_API_KEY:
-        response_text = call_neuralseek_chat(messages)
+    if not reviews:
+        return jsonify({
+            'error': 'Failed to generate any reviews',
+            'details': errors
+        }), 500
 
-    if not response_text:
-        response_text = (
-            "I understand your question. Let me think about that... Based on my review, "
-            "I think your idea has potential but needs refinement in certain areas."
-        )
-    
-    return jsonify({'response': response_text})
+    result = {
+        'inputText': text,
+        'numReviews': num_reviews,
+        'reviews': reviews,
+        'successCount': len(reviews),
+        'errorCount': len(errors),
+        'errors': errors if errors else None
+    }
 
-
-@app.route('/summarize_feedback', methods=['POST'])
-def summarize_feedback():
-    if not genai:
-        app.logger.error("Gemini SDK unavailable")
-        return jsonify({"items": []})
-
-    data = request.get_json(force=True) or {}
-    conversation = data.get("conversation", "")
-
-    if isinstance(conversation, list):
-        conversation = "\n".join(str(item) for item in conversation)
-    conversation = conversation.strip()
-
-    if not conversation:
-        return jsonify({"items": []})
-
-    api_key = GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        app.logger.error("Gemini API key not configured")
-        return jsonify({"items": []})
-
-    genai.configure(api_key=api_key)
-
-    prompt = (
-        "You are an assistant that extracts actionable product feedback from a chat.\n"
-        "Summarize the most recent suggestions as short bullet points (3–6 words each).\n"
-        "Only output plain text lines.\n\n"
-        f"Conversation:\n{conversation}"
-    )
-
-    model_names = ["models/gemini-1.5-flash", "models/gemini-pro"]
-    items = []
-    last_error = None
-
-    for model_name in model_names:
-        try:
-            model = genai.GenerativeModel(model_name=model_name)
-            response = model.generate_content(prompt)
-            text_output = getattr(response, "text", "") or ""
-
-            if not text_output and getattr(response, "candidates", None):
-                candidate = response.candidates[0]  # type: ignore[index]
-                parts = getattr(candidate, "content", None)
-                if parts and getattr(parts, "parts", None):
-                    text_output = "\n".join(
-                        getattr(part, "text", "") for part in parts.parts if getattr(part, "text", "")
-                    )
-
-            raw_lines = text_output.splitlines()
-            items = [line.strip("-• ").strip() for line in raw_lines if line.strip()]
-
-            if items:
-                break
-        except Exception as exc:  # pragma: no cover - defensive
-            last_error = exc
-            app.logger.error("Gemini summarization error (%s): %s", model_name, exc)
-
-    if not items and last_error:
-        app.logger.error("Gemini summarization ultimately failed: %s", last_error)
-
-    existing_items = session.get("feedback_items", [])
-    normalized_existing = {item.lower() for item in existing_items}
-    for item in items:
-        if item and item.lower() not in normalized_existing:
-            existing_items.append(item)
-            normalized_existing.add(item.lower())
-
-    session["feedback_items"] = existing_items
-    session.modified = True
-
-    return jsonify({"items": items})
-
-
-@app.route('/apply_feedback', methods=['POST'])
-def apply_feedback():
-    data = request.get_json(silent=True) or {}
-    selected_items = data.get("selected_items", [])
-
-    if isinstance(selected_items, str):
-        selected_items = [selected_items]
-
-    def sanitize_item(item: str) -> str:
-        if not isinstance(item, str):
-            return ""
-        no_tags = re.sub(r"<[^>]*?>", "", item)
-        return no_tags.strip()
-
-    sanitized_items = [sanitize_item(item) for item in selected_items]
-    sanitized_items = [item for item in sanitized_items if item]
-
-    description = session.get("product_description", "")
-    if not isinstance(description, str):
-        description = ""
-
-    if sanitized_items:
-        updates_text = "\n\n### Updates Applied:\n" + "\n".join(f"- {item}" for item in sanitized_items)
-        updated_description = description + updates_text
-    else:
-        updated_description = description
-
-    session["product_description"] = updated_description
-
-    num_reviewers = int(session.get("num_reviewers", 5))
-
-    try:
-        reviewers = generate_reviewers(updated_description, num_reviewers)
-    except Exception as exc:
-        print("Error regenerating reviewers:", exc)
-        limit = min(num_reviewers, len(REVIEWER_PERSONAS))
-        reviewers = [create_dummy_reviewer(REVIEWER_PERSONAS[i]) for i in range(limit)]
-
-    session["reviewers"] = reviewers
-
-    if sanitized_items:
-        remaining_feedback = [
-            item for item in session.get("feedback_items", [])
-            if item not in sanitized_items
-        ]
-        session["feedback_items"] = remaining_feedback
-
-    session.modified = True
-
-    return jsonify({"success": True})
+    return jsonify(result)
 
 if __name__ == '__main__':
     app.run(debug=True)
-
