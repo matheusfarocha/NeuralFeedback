@@ -1,303 +1,368 @@
-const conversationHistory = [];
-const feedbackItemSet = new Set();
+(() => {
+    const selectedCharacteristics = new Set();
 
-let feedbackListEl = null;
-let applyButton = null;
-let isSummarizingFeedback = false;
-
-// Slider value update for index page
-document.addEventListener('DOMContentLoaded', function() {
-    const slider = document.getElementById('num_reviewers');
-    const sliderValue = document.getElementById('sliderValue');
-
-    if (slider && sliderValue) {
-        slider.addEventListener('input', function() {
-            sliderValue.textContent = this.value;
-        });
-    }
-
-    // Reviewer card click handlers
-    const reviewerCards = document.querySelectorAll('.reviewer-card[data-reviewer-id]');
-    reviewerCards.forEach(card => {
-        card.addEventListener('click', function() {
-            const reviewerId = this.getAttribute('data-reviewer-id');
-            window.location.href = `/chat/${reviewerId}`;
-        });
+    document.addEventListener('DOMContentLoaded', () => {
+        setupIndexPage();
     });
 
-    feedbackListEl = document.getElementById('feedback-dashboard-list');
-    applyButton = document.getElementById('applyButton');
+    function setupIndexPage() {
+        const reviewCountSlider = document.getElementById('reviewCount');
+        const reviewCountValue = document.getElementById('reviewCountValue');
+        const ageMinSlider = document.getElementById('ageMin');
+        const ageMaxSlider = document.getElementById('ageMax');
+        const ageMinValue = document.getElementById('ageMinValue');
+        const ageMaxValue = document.getElementById('ageMaxValue');
+        const generateButton = document.getElementById('generateButton');
 
-    const initialFeedbackScript = document.getElementById('initial-feedback-items');
-    let initialFeedbackItems = [];
-
-    if (initialFeedbackScript) {
-        try {
-            initialFeedbackItems = JSON.parse(initialFeedbackScript.textContent || '[]');
-        } catch (error) {
-            console.error('Failed to parse initial feedback items', error);
+        if (reviewCountSlider && reviewCountValue) {
+            reviewCountSlider.addEventListener('input', () => {
+                reviewCountValue.textContent = reviewCountSlider.value;
+            });
         }
-    }
 
-    if (feedbackListEl) {
-        const existingItems = feedbackListEl.querySelectorAll('.feedback-item');
-        existingItems.forEach(item => {
-            const storedInput = item.querySelector('.feedback-checkbox');
-            const value = storedInput ? (storedInput.dataset.text || storedInput.value || '') : (item.getAttribute('data-item') || item.textContent || '');
-            if (value) {
-                feedbackItemSet.add(value.toLowerCase());
-            }
-        });
+        if (ageMinSlider && ageMaxSlider && ageMinValue && ageMaxValue) {
+            const updateAgeRange = () => {
+                let minVal = parseInt(ageMinSlider.value, 10);
+                let maxVal = parseInt(ageMaxSlider.value, 10);
 
-        if (Array.isArray(initialFeedbackItems)) {
-            initialFeedbackItems.forEach(item => appendFeedbackItem(item));
-        }
-    }
-
-    initializeConversationHistory();
-
-    // Chat form submission handler
-    const chatForm = document.getElementById('chatForm');
-    const messageInput = document.getElementById('messageInput');
-    const chatMessages = document.getElementById('chatMessages');
-
-    if (chatForm && messageInput && chatMessages) {
-        chatForm.addEventListener('submit', async function(e) {
-            e.preventDefault();
-
-            const message = messageInput.value.trim();
-            if (!message) return;
-
-            // Add user message
-            addMessage(message, 'user');
-            messageInput.value = '';
-            messageInput.disabled = true;
-
-            // Get reviewer ID from URL
-            const pathParts = window.location.pathname.split('/').filter(p => p);
-            const reviewerId = pathParts[pathParts.length - 1]; // /chat/1 -> 1
-
-            try {
-                // Call Flask API endpoint
-                const response = await fetch(`/chat/${reviewerId}/message`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ message: message })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    addMessage(data.response, 'ai');
-                } else {
-                    addMessage(data.error || 'Error sending message', 'ai');
+                if (minVal > maxVal) {
+                    [minVal, maxVal] = [maxVal, minVal];
+                    ageMinSlider.value = minVal;
+                    ageMaxSlider.value = maxVal;
                 }
-            } catch (error) {
-                addMessage('Error: Could not send message. Please try again.', 'ai');
-            } finally {
-                messageInput.disabled = false;
-                messageInput.focus();
+
+                ageMinValue.textContent = minVal;
+                ageMaxValue.textContent = maxVal;
+
+                const range = parseInt(ageMinSlider.max, 10) - parseInt(ageMinSlider.min, 10);
+                const progress = document.getElementById('ageRangeProgress');
+                if (progress) {
+                    const minPercent = ((minVal - ageMinSlider.min) / range) * 100;
+                    const maxPercent = ((maxVal - ageMinSlider.min) / range) * 100;
+                    progress.style.left = `${minPercent}%`;
+                    progress.style.width = `${maxPercent - minPercent}%`;
+                }
+            };
+
+            ageMinSlider.addEventListener('input', updateAgeRange);
+            ageMaxSlider.addEventListener('input', updateAgeRange);
+            updateAgeRange();
+        }
+
+        if (generateButton) {
+            generateButton.addEventListener('click', handleSubmit);
+        }
+
+        window.onclick = function (event) {
+            const modal = document.getElementById('metadataModal');
+            if (modal && event.target === modal) {
+                closeModal();
+            }
+        };
+
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                closeModal();
             }
         });
     }
 
-    if (applyButton && feedbackListEl) {
-        applyButton.addEventListener('click', handleApplyFeedback);
-    }
-});
+    async function handleSubmit() {
+        const textInput = document.getElementById('textInput');
+        const reviewCountSlider = document.getElementById('reviewCount');
+        const ageMinSlider = document.getElementById('ageMin');
+        const ageMaxSlider = document.getElementById('ageMax');
+        const genderSelect = document.getElementById('gender');
+        const locationSelect = document.getElementById('location');
+        const errorDiv = document.getElementById('error');
+        const generateButton = document.getElementById('generateButton');
 
-function initializeConversationHistory() {
-    const chatMessages = document.getElementById('chatMessages');
-    if (!chatMessages) return;
-
-    const messages = chatMessages.querySelectorAll('.message');
-    messages.forEach(message => {
-        const isAi = message.classList.contains('message-ai');
-        const content = (message.textContent || '').trim();
-        if (content) {
-            recordConversationEntry(content, isAi ? 'ai' : 'user');
+        if (!textInput || !reviewCountSlider || !errorDiv || !generateButton) {
+            return;
         }
-    });
-}
 
-function addMessage(text, type) {
-    const chatMessages = document.getElementById('chatMessages');
-    if (!chatMessages) return;
+        const text = textInput.value.trim();
+        const numReviews = parseInt(reviewCountSlider.value, 10);
+        const ageMin = parseInt(ageMinSlider.value, 10);
+        const ageMax = parseInt(ageMaxSlider.value, 10);
+        const gender = (genderSelect.value || '').trim();
+        const location = (locationSelect.value || '').trim();
+        const characteristics = Array.from(selectedCharacteristics);
 
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message message-${type}`;
+        if (!text) {
+            showError('Please enter a product idea first!');
+            return;
+        }
 
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content';
-    contentDiv.innerHTML = `<p>${escapeHtml(text)}</p>`;
+        if (!characteristics.length) {
+            showError('Please select at least one characteristic for your customer personas!');
+            return;
+        }
 
-    messageDiv.appendChild(contentDiv);
-    chatMessages.appendChild(messageDiv);
-
-    recordConversationEntry(text, type);
-
-    if (type === 'ai') {
-        requestFeedbackSummary();
-    }
-
-    // Scroll to bottom
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function recordConversationEntry(text, type) {
-    const normalized = (text || '').trim();
-    if (!normalized) return;
-
-    const role = type === 'ai' ? 'reviewer' : 'user';
-    conversationHistory.push({ role, content: normalized });
-
-    if (conversationHistory.length > 100) {
-        conversationHistory.splice(0, conversationHistory.length - 100);
-    }
-}
-
-async function requestFeedbackSummary() {
-    if (!feedbackListEl || isSummarizingFeedback) return;
-
-    const conversationSnippet = buildConversationSnippet(6);
-    if (!conversationSnippet) return;
-
-    isSummarizingFeedback = true;
-
-    try {
-        const response = await fetch('/summarize_feedback', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ conversation: conversationSnippet })
-        });
-
-        const rawText = await response.text();
-        let data = null;
+        clearError();
+        generateButton.disabled = true;
+        generateButton.textContent = 'Generating…';
 
         try {
-            data = rawText ? JSON.parse(rawText) : null;
-        } catch (jsonErr) {
-            console.error('Error summarizing feedback', jsonErr);
-            console.error('Raw response:', rawText);
+            const response = await fetch('/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    text,
+                    numReviews,
+                    ageMin,
+                    ageMax,
+                    gender,
+                    location,
+                    characteristics,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                const details = Array.isArray(data.details) ? data.details.join('\n') : '';
+                throw new Error(`${data.error || 'Generation failed.'}${details ? `\n${details}` : ''}`);
+            }
+
+            showFeedbackDashboard(data);
+        } catch (error) {
+            console.warn('Failed to fetch from /generate, using fallback personas. Reason:', error);
+            const fallback = buildFallbackData(text, characteristics.length ? characteristics : ['Analytical']);
+            showFeedbackDashboard(fallback);
+        } finally {
+            generateButton.disabled = false;
+            generateButton.textContent = 'Generate AI Client Responses';
+        }
+    }
+
+    function showFeedbackDashboard(data) {
+        const overlay = document.getElementById('feedbackOverlay');
+        const cardsContainer = document.getElementById('feedbackCards');
+        const summaryEl = document.getElementById('feedbackSummary');
+        const mainWrapper = document.querySelector('.page-wrapper');
+
+        if (!overlay || !cardsContainer) {
             return;
         }
 
-        if (!response.ok) {
-            console.error(data?.error || 'Failed to summarize feedback');
-            return;
+        cardsContainer.innerHTML = '';
+
+        if (Array.isArray(data.reviews) && data.reviews.length) {
+            if (summaryEl) {
+                if (data.fallbackMessage) {
+                    summaryEl.textContent = data.fallbackMessage;
+                } else {
+                    const total = data.reviews.reduce((acc, review) => acc + (review.metadata?.sentiment_rating || 0), 0);
+                    const average = (total / data.reviews.length).toFixed(1);
+                    summaryEl.textContent = `Generated ${data.reviews.length} persona responses • Avg sentiment ${average}/10`;
+                }
+            }
+
+            data.reviews.forEach(reviewItem => {
+                const rating = reviewItem.metadata?.sentiment_rating || 0;
+                const personaCard = document.createElement('article');
+                personaCard.className = 'persona-card';
+                personaCard.innerHTML = `
+                    <div class="persona-header">
+                        <div class="persona-avatar">${escapeHtml((reviewItem.metadata?.initial || reviewItem.index || 1).toString())}</div>
+                        <div>
+                            <h3 class="persona-name">${escapeHtml(reviewItem.metadata?.persona_name || `Persona #${reviewItem.index || 1}`)}</h3>
+                            <p class="persona-meta">${escapeHtml(reviewItem.metadata?.persona_descriptor || reviewItem.metadata?.personality_description || 'Customer Persona')}</p>
+                        </div>
+                    </div>
+                    <div class="persona-tags">
+                        ${(reviewItem.metadata?.characteristics || []).map(char => `<span class="persona-tag">${escapeHtml(char)}</span>`).join('')}
+                    </div>
+                    <div class="persona-rating" aria-label="Sentiment rating">
+                        ${Array.from({ length: 5 }).map((_, i) => `
+                            <svg class="star-icon${i < rating ? ' star-filled' : ''}" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
+                            </svg>
+                        `).join('')}
+                        <span class="rating-value">${rating}/5</span>
+                    </div>
+                    <p class="persona-feedback">${escapeHtml(reviewItem.review || '')}</p>
+                    <div class="persona-actions">
+                        <a class="feedback-card-btn" href="#" onclick="return false;">View Chat (coming soon)</a>
+                    </div>
+                `;
+                cardsContainer.appendChild(personaCard);
+            });
+        } else if (summaryEl) {
+            summaryEl.textContent = data.fallbackMessage || 'We could not generate persona responses. Please adjust your input and try again.';
         }
 
-        if (data && Array.isArray(data.items)) {
-            data.items.forEach(item => appendFeedbackItem(item));
+        overlay.classList.remove('hidden');
+        if (mainWrapper) {
+            mainWrapper.classList.add('hidden');
         }
-    } catch (error) {
-        console.error('Error summarizing feedback', error);
-    } finally {
-        isSummarizingFeedback = false;
-    }
-}
 
-function buildConversationSnippet(limit) {
-    if (!conversationHistory.length) return '';
-
-    const recent = conversationHistory.slice(-limit);
-    return recent
-        .map(entry => {
-            const speaker = entry.role === 'user' ? 'User' : 'Reviewer';
-            return `${speaker}: ${entry.content}`;
-        })
-        .join('\n');
-}
-
-function appendFeedbackItem(item) {
-    if (!feedbackListEl) return;
-
-    const normalized = (item || '').trim();
-    if (!normalized) return;
-
-    const key = normalized.toLowerCase();
-    if (feedbackItemSet.has(key)) return;
-
-    feedbackItemSet.add(key);
-
-    const label = document.createElement('label');
-    label.className = 'feedback-item';
-    label.setAttribute('data-item', normalized);
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'feedback-checkbox';
-    checkbox.dataset.text = normalized;
-    checkbox.value = normalized;
-
-    const span = document.createElement('span');
-    span.textContent = normalized;
-
-    label.appendChild(checkbox);
-    label.appendChild(span);
-
-    feedbackListEl.appendChild(label);
-}
-
-function collectSelectedFeedbackItems() {
-    if (!feedbackListEl) return [];
-
-    return Array.from(
-        feedbackListEl.querySelectorAll('.feedback-checkbox:checked')
-    )
-        .map(input => ((input.dataset && input.dataset.text) || input.value || '').trim())
-        .filter(Boolean);
-}
-
-async function handleApplyFeedback() {
-    const selectedItems = collectSelectedFeedbackItems();
-
-    if (!selectedItems.length) {
-        window.alert('Select at least one feedback item to apply.');
-        return;
+        const restartBtn = document.getElementById('feedbackRestartButton');
+        if (restartBtn) {
+            restartBtn.addEventListener('click', () => {
+                overlay.classList.add('hidden');
+                if (mainWrapper) {
+                    mainWrapper.classList.remove('hidden');
+                }
+            }, { once: true });
+        }
     }
 
-    if (!applyButton) return;
+    function showError(message) {
+        const errorDiv = document.getElementById('error');
+        if (!errorDiv) return;
+        errorDiv.textContent = message;
+        errorDiv.classList.add('show');
+    }
 
-    applyButton.disabled = true;
-    applyButton.classList.add('is-loading');
-    const originalText = applyButton.textContent;
-    applyButton.textContent = 'Applying...';
+    function clearError() {
+        const errorDiv = document.getElementById('error');
+        if (!errorDiv) return;
+        errorDiv.textContent = '';
+        errorDiv.classList.remove('show');
+    }
 
-    try {
-        const response = await fetch('/apply_feedback', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
+    function showMetadata(reviewItem) {
+        const modal = document.getElementById('metadataModal');
+        const modalBody = document.getElementById('modalBody');
+        if (!modal || !modalBody) return;
+
+        const metadata = reviewItem.metadata || {};
+        let content = `
+            <div class="review-full-text">
+                <div class="metadata-label">Customer Feedback</div>
+                <div>${escapeHtml(reviewItem.review || '')}</div>
+            </div>
+        `;
+
+        if (metadata.personality_description) {
+            content += createMetadataBlock('Persona Profile', metadata.personality_description);
+        }
+
+        if (metadata.sentiment_rating !== undefined) {
+            const sentimentLabel =
+                metadata.sentiment_rating >= 8 ? '(Positive)' : metadata.sentiment_rating >= 4 ? '(Neutral)' : '(Negative)';
+            content += createMetadataBlock(
+                'Sentiment Rating',
+                `${metadata.sentiment_rating}/10 ${sentimentLabel}`
+            );
+        }
+
+        if (Array.isArray(metadata.characteristics)) {
+            const traits = metadata.characteristics
+                .map(char => {
+                    const intensity = metadata.characteristic_intensities?.[char] || 1;
+                    return `<div class="metadata-chip"><strong>${escapeHtml(char)}</strong>: ${Math.round(intensity * 100)}%</div>`;
+                })
+                .join('');
+            content += `
+                <div class="metadata-item">
+                    <div class="metadata-label">Characteristics</div>
+                    <div class="metadata-value">${traits}</div>
+                </div>
+            `;
+        }
+
+        if (metadata.age_range) {
+            content += createMetadataBlock('Age Range', metadata.age_range);
+        }
+
+        if (metadata.gender) {
+            content += createMetadataBlock('Gender', metadata.gender);
+        }
+
+        if (metadata.location) {
+            content += createMetadataBlock('Location', metadata.location);
+        }
+
+        modalBody.innerHTML = content;
+        modal.classList.add('show');
+    }
+
+    function createMetadataBlock(label, value) {
+        return `
+            <div class="metadata-item">
+                <div class="metadata-label">${escapeHtml(label)}</div>
+                <div class="metadata-value">${escapeHtml(value)}</div>
+            </div>
+        `;
+    }
+
+    function closeModal() {
+        const modal = document.getElementById('metadataModal');
+        if (!modal) return;
+        modal.classList.remove('show');
+    }
+
+    function toggleCharacteristic(button) {
+        if (!button) return;
+        const characteristic = button.getAttribute('data-characteristic');
+        if (!characteristic) return;
+
+        if (selectedCharacteristics.has(characteristic)) {
+            selectedCharacteristics.delete(characteristic);
+            button.classList.remove('selected');
+        } else {
+            selectedCharacteristics.add(characteristic);
+            button.classList.add('selected');
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function buildFallbackData(text, characteristics) {
+        const personaBase = [
+            {
+                persona_name: 'Avery Chen',
+                persona_descriptor: 'Strategy-focused product designer',
+                tone: 'Supportive',
             },
-            body: JSON.stringify({ selected_items: selectedItems })
+            {
+                persona_name: 'Jordan Ramirez',
+                persona_descriptor: 'Data-driven growth specialist',
+                tone: 'Analytical',
+            },
+            {
+                persona_name: 'Morgan Patel',
+                persona_descriptor: 'User empathy researcher',
+                tone: 'Empathetic',
+            },
+        ];
+
+        const reviews = characteristics.map((char, idx) => {
+            const persona = personaBase[idx % personaBase.length];
+            const rating = 3 + (idx % 3);
+            return {
+                index: idx + 1,
+                review: `As a ${char} persona, I see potential in “${text.slice(0, 60)}${text.length > 60 ? '…' : ''}”. Focus on clarifying value for target customers and outlining next validation steps.`,
+                metadata: {
+                    persona_name: persona.persona_name,
+                    persona_descriptor: persona.persona_descriptor,
+                    initial: persona.persona_name[0],
+                    characteristics,
+                    sentiment_rating: rating > 5 ? 5 : rating,
+                },
+            };
         });
 
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            window.alert('Changes applied! Regenerating feedback...');
-            window.location.href = '/generate';
-        } else {
-            window.alert(data.error || 'Failed to apply feedback. Please try again.');
-        }
-    } catch (error) {
-        console.error('Error applying feedback', error);
-        window.alert('Failed to apply feedback. Please try again.');
-    } finally {
-        applyButton.disabled = false;
-        applyButton.classList.remove('is-loading');
-        applyButton.textContent = originalText;
+        return {
+            reviews,
+            fallbackMessage: 'Our live reviewers were unavailable, so here are simulated persona insights instead.',
+        };
     }
-}
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+    // Expose functions used from HTML
+    window.handleSubmit = handleSubmit;
+    window.toggleCharacteristic = toggleCharacteristic;
+    window.showMetadata = showMetadata;
+    window.closeModal = closeModal;
+})();
+
 

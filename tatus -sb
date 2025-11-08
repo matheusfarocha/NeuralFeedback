@@ -1,0 +1,167 @@
+[1mdiff --git a/app.py b/app.py[m
+[1mindex 7eb97a1..397493b 100644[m
+[1m--- a/app.py[m
+[1m+++ b/app.py[m
+[36m@@ -1,35 +1,25 @@[m
+[31m-from flask import Flask, render_template, request, redirect, url_for, jsonify, session[m
+[32m+[m[32mfrom flask import Flask, render_template, request, jsonify[m
+ from dotenv import load_dotenv[m
+ import os[m
+[31m-import re[m
+[31m-[m
+[31m-try:[m
+[31m-    import google.generativeai as genai  # type: ignore[import-not-found][m
+[31m-except ImportError:  # pragma: no cover - optional dependency[m
+[31m-    genai = None  # type: ignore[assignment][m
+[31m-[m
+[31m-from neuralseek_client import ([m
+[31m-    NEURALSEEK_API_KEY,[m
+[31m-    REVIEWER_PERSONAS,[m
+[31m-    call_neuralseek_chat,[m
+[31m-    create_dummy_reviewer,[m
+[31m-    generate_reviewers,[m
+[31m-)[m
+[32m+[m[32mimport google.generativeai as genai[m
+[32m+[m[32mfrom concurrent.futures import ThreadPoolExecutor, as_completed[m
+ [m
+ # Load environment variables from .env file[m
+ load_dotenv()[m
+ [m
+ app = Flask(__name__)[m
+[31m-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret')[m
+ [m
+ # Load Gemini API key from environment variables[m
+ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')[m
+ [m
+[31m-# Configure Gemini API when available[m
+[31m-if genai and GEMINI_API_KEY:[m
+[32m+[m[32m# Configure Gemini API[m
+[32m+[m[32mif GEMINI_API_KEY:[m
+     genai.configure(api_key=GEMINI_API_KEY)[m
+ [m
+[31m-# Available characteristics (for compatibility with older templates)[m
+[32m+[m[32m# Define intensity levels for characteristic variations[m
+[32m+[m[32mINTENSITY_LEVELS = [0.9, 1.0, 1.1]  # 90%, 100%, 110%[m
+[32m+[m
+[32m+[m[32m# Available characteristics for users to select[m
+ AVAILABLE_CHARACTERISTICS = [[m
+     "analytical",[m
+     "creative",[m
+[36m@@ -40,257 +30,244 @@[m [mAVAILABLE_CHARACTERISTICS = [[m
+     "detail-oriented",[m
+     "impulsive",[m
+     "cautious",[m
+[31m-    "adventurous",[m
+[32m+[m[32m    "adventurous"[m
+ ][m
+ [m
+[31m-[m
+ @app.route('/')[m
+[31m-def home():[m
+[31m-    """Render the main page"""[m
+[31m-    return render_template('index.html', characteristics=AVAILABLE_CHARACTERISTICS)[m
+[31m-[m
+[31m-[m
+[31m-@app.route('/index')[m
+ def index():[m
+[31m-    """Alias for home route"""[m
+[32m+[m[32m    """Render the main page"""[m
+     return render_template('index.html', characteristics=AVAILABLE_CHARACTERISTICS)[m
+ [m
+[31m-[m
+[31m-@app.route('/generate', methods=['GET', 'POST'])[m
+[31m-def generate():[m
+[31m-    """Handle form submission and generate multiple reviews using NeuralSeek API"""[m
+[31m-    if request.method == 'GET':[m
+[31m-        stored_reviewers = session.get('reviewers')[m
+[31m-        if not stored_reviewers:[m
+[31m-            return redirect(url_for('home'))[m
+[31m-[m
+[31m-        text = session.get('product_description', '')[m
+[31m-        return render_template('reviews.html', reviewers=stored_reviewers, text=text)[m
+[31m-[m
+[31m-    # Support both form data and JSON[m
+[31m-    if request.is_json:[m
+[31m-        data = request.get_json(silent=True) or {}[m
+[31m-        text = data.get('text', '').strip()[m
+[31m-        num_reviews = int(data.get('numReviews', session.get('num_reviewers', 5)))[m
+[32m+[m[32mdef generate_review(prompt, selected_characteristics, characteristic_intensities, age_min=None, age_max=None, gender=None, location=None):[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Generate customer feedback using Gemini API with selected persona characteristics.[m
+[32m+[m[32m    All feedback responses have the same characteristics but with different intensity combinations.[m
+[32m+[m
+[32m+[m[32m    Args:[m
+[32m+[m[32m        prompt: The product idea/concept to get feedback on[m
+[32m+[m[32m        selected_characteristics: List of characteristic names selected by user[m
+[32m+[m[32m        characteristic_intensities: Dict mapping each characteristic to its intensity (0.9, 1.0, or 1.1)[m
+[32m+[m[32m        age_min, age_max, gender, location: Demographic parameters for the customer persona[m
+[32m+[m
+[32m+[m[32m    Returns:[m
+[32m+[m[32m        Tuple of (review_data, error) where review_data contains feedback text and persona metadata[m
+[32m+[m[32m    """[m
+[32m+[m[32m    if not GEMINI_API_KEY:[m
+[32m+[m[32m        return None, "Gemini API key not configured"[m
+[32m+[m
+[32m+[m[32m    if not selected_characteristics:[m
+[32m+[m[32m        return None, "No characteristics selected"[m
+[32m+[m
+[32m+[m[32m    # Intensity modifier descriptions[m
+[32m+[m[32m    intensity_descriptions = {[m
+[32m+[m[32m        0.9: "somewhat",[m
+[32m+[m[32m        1.0: "moderately",[m
+[32m+[m[32m        1.1: "very"[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    # Build the personality description with intensities[m
+[32m+[m[32m    personality_parts = [][m
+[32m+[m[32m    for char in selected_characteristics:[m
+[32m+[m[32m        intensity = characteristic_intensities.get(char, 1.0)[m
+[32m+[m[32m        intensity_modifier = intensity_descriptions.get(intensity, "moderately")[m
+[32m+[m[32m        personality_parts.append(f"{intensity_modifier} {char}")[m
+[32m+[m
+[32m+[m[32m    # Combine characteristics[m
+[32m+[m[32m    if len(personality_parts) == 1:[m
+[32m+[m[32m        personality = personality_parts[0][m
+[32m+[m[32m    elif len(personality_parts) == 2:[m
+[32m+[m[32m        personality = f"{personality_parts[0]} and {personality_parts[1]}"[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        personality = ", ".join(personality_parts[:-1]) + f", and {personality_parts[-1]}"[m
+[32m+[m
+[32m+[m[32m    # Build context string if any context is provided[m
+[32m+[m[32m    context_parts = [][m
+[32m+[m[32m    if age_min and age_max:[m
+[32m+[m[32m        if age_min == age_max:[m
+[32m+[m[32m            context_parts.append(f"age {age_min}")[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            context_parts.append(f"age {age_min}-{age_max}")[m
+[32m+[m[32m    elif age_min:[m
+[32m+[m[32m        context_parts.append(f"age {age_min}+")[m
+[32m+[m[32m    elif age_max:[m
+[32m+[m[32m        context_parts.append(f"age up to {age_max}")[m
+[32m+[m[32m    if gender:[m
+[32m+[m[32m        context_parts.append(f"gender {gender}")[m
+[32m+[m[32m    if location:[m
+[32m+[m[32m        context_parts.append(f"from {location}")[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Build the full context string[m
+[32m+[m[32m    if context_parts:[m
+[32m+[m[32m        reviewer_context = f"a potential customer who is {personality}, {', '.join(context_parts)}"[m
+     else:[m
+[31m-        text = request.form.get('text_input', '').strip()[m
+[31m-        num_reviews = int(request.form.get('num_reviewers', session.get('num_reviewers', 5)))[m
+[32m+[m[32m        reviewer_context = f"a potential customer who is {personality}"[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Create the prompt for Gemini[m
+[32m+[m[32m    gemini_prompt = f"""You are a potential customer being presented with a product idea. The product concept is: {prompt}[m
+ [m
+[31m-    if not text:[m
+[31m-        if request.is_json:[m
+[31m-            return jsonify({'error': 'Please enter some text first!'}), 400[m
+[31m-        return redirect(url_for('home'))[m
+[32m+[m[32mYou are {reviewer_context}.[m
+[32m+[m
+[32m+[m[32mPlease share your honest thoughts and feedback about this product idea. Provide declarative statements about what you think - do NOT ask questions. Explain what appeals to you or concerns you about this concept. Keep your response natural, authentic, and demonstrate your personality traits in your writing style and tone. Provide 2-4 sentences of genuine feedback.[m
+ [m
+[31m-    if not NEURALSEEK_API_KEY:[m
+[31m-        app.logger.warning("NeuralSeek API key not configured; using dummy reviewers.")[m
+[32m+[m[32mAfter your feedback, on a new line, provide a rating from 1-10 indicating how positive you feel about this product idea 

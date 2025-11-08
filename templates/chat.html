@@ -6,82 +6,88 @@
     <title>Chat with {{ reviewer.name }} - NeuralFeedback</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
-    <div class="min-h-screen bg-gradient-dark flex flex-col">
-        <!-- Header -->
-        <div class="chat-header">
-            <a href="{{ url_for('home') }}" class="btn-back">← Back</a>
-            <div class="reviewer-header-info">
-                <div class="avatar-small">{{ reviewer.name[0] }}</div>
-                <div>
-                    <h2 class="reviewer-name-header">{{ reviewer.name }}</h2>
-                    <p class="reviewer-profession-header">{{ reviewer.profession }}</p>
-                </div>
+<body class="bg-gradient-dark min-h-screen flex flex-col">
+    <header class="chat-shell-header">
+        <a href="/reviews" class="btn-secondary">← Back to Feedback</a>
+        <div class="chat-persona-summary">
+            <div class="avatar-small">{{ reviewer.name[0] }}</div>
+            <div>
+                <h1 class="persona-name">{{ reviewer.name }}</h1>
+                <p class="persona-info">{{ reviewer.profession }}</p>
             </div>
         </div>
+    </header>
 
-        <div class="chat-content">
-            <div class="chat-panel">
-                <!-- Messages Area -->
-                <div class="chat-messages" id="chatMessages">
-                    <div class="message message-ai">
-                        <div class="message-content">
-                            <p>Hello! I've reviewed your idea. What would you like to know more about?</p>
-                        </div>
-                    </div>
-                    <div class="message message-user">
-                        <div class="message-content">
-                            <p>What do you think of my idea?</p>
-                        </div>
-                    </div>
-                    <div class="message message-ai">
-                        <div class="message-content">
-                            <p>I think it's innovative but could use clarity on target market. The core concept is solid, but defining your ideal customer persona would strengthen the value proposition significantly.</p>
-                        </div>
+    <main class="chat-stage">
+        <section class="chat-panel animate-slide-up">
+            <div class="chat-messages" id="chatMessages">
+                <div class="message message-ai">
+                    <div class="message-content">
+                        <p>Hello! I've reviewed your idea. What would you like to know more about?</p>
                     </div>
                 </div>
-
-                <!-- Input Area -->
-                <div class="chat-input-container">
-                    <form class="chat-form" id="chatForm">
-                        <input
-                            type="text"
-                            id="messageInput"
-                            class="chat-input"
-                            placeholder="Type your message..."
-                            autocomplete="off"
-                        >
-                        <button type="submit" class="btn-send">Send</button>
-                    </form>
+                <div class="message message-user">
+                    <div class="message-content">
+                        <p>What do you think of my idea?</p>
+                    </div>
+                </div>
+                <div class="message message-ai">
+                    <div class="message-content">
+                        <p>I think it's innovative but could use clarity on target market. The core concept is solid, but defining your ideal customer persona would strengthen the value proposition significantly.</p>
+                    </div>
                 </div>
             </div>
 
-            <aside class="feedback-sidebar" id="feedbackSidebar">
-                <div class="feedback-card">
-                    <div class="feedback-card-header">
-                        <h3>Feedback Dashboard</h3>
-                    </div>
-                    <div class="feedback-items" id="feedback-dashboard-list">
-                        {% for item in feedback_items %}
-                            <label class="feedback-item" data-item="{{ item }}">
-                                <input type="checkbox" class="feedback-checkbox" data-text="{{ item }}" value="{{ item }}">
-                                <span>{{ item }}</span>
-                            </label>
+            <form class="chat-input-container" id="chatForm">
+                <input
+                    type="text"
+                    id="messageInput"
+                    class="chat-input"
+                    placeholder="Ask a follow-up question…"
+                    autocomplete="off"
+                >
+                <button type="submit" class="btn-send">Send</button>
+            </form>
+        </section>
+
+        <aside class="feedback-sidebar" id="feedbackSidebar">
+            <div class="feedback-card animate-fade-in">
+                <div class="feedback-card-header">
+                    <p class="eyebrow">Live Summary</p>
+                    <h2>Feedback Dashboard</h2>
+                </div>
+
+                <div class="sentiment-meter" aria-label="Sentiment rating">
+                    <p class="sentiment-label">Current Sentiment</p>
+                    <div class="persona-rating" id="liveSentimentRating" data-rating="3">
+                        {% for i in range(5) %}
+                        <svg class="star-icon{% if i < 3 %} star-filled{% endif %}" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
+                        </svg>
                         {% endfor %}
-                    </div>
-                    <div class="feedback-footer">
-                        <button
-                            id="applyButton"
-                            type="button"
-                            class="btn-apply-feedback w-full mt-4 py-2 px-4 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl hover:shadow-[0_0_15px_rgba(139,92,246,0.7)] transition"
-                        >
-                            Apply Changes
-                        </button>
+                        <span class="rating-value" id="liveSentimentValue">3/5</span>
                     </div>
                 </div>
-            </aside>
-        </div>
-    </div>
+
+                <div class="feedback-items" id="feedback-dashboard-list">
+                    {% for item in feedback_items %}
+                        <label class="feedback-item" data-item="{{ item }}">
+                            <input type="checkbox" class="feedback-checkbox" data-text="{{ item }}" value="{{ item }}">
+                            <span>{{ item }}</span>
+                        </label>
+                    {% endfor %}
+                </div>
+
+                <button
+                    id="applyButton"
+                    type="button"
+                    class="btn-apply-feedback mt-4"
+                >
+                    Apply Changes
+                </button>
+            </div>
+        </aside>
+    </main>
 
     <script id="initial-feedback-items" type="application/json">
         {{ feedback_items | tojson | safe }}
@@ -89,4 +95,3 @@
     <script src="{{ url_for('static', filename='scripts.js') }}"></script>
 </body>
 </html>
-
