@@ -22,7 +22,7 @@
             </div>
         </div>
 
-        <button class="button" id="generateButton" disabled>Generate</button>
+        <button class="button" id="generateButton" onclick="handleSubmit()">Generate</button>
 
         <div class="error" id="error"></div>
 
@@ -78,13 +78,33 @@
                 const data = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(data.error || 'An error occurred');
+                    let errorMsg = data.error || 'An error occurred';
+                    if (data.details && data.details.length > 0) {
+                        errorMsg += '\n\nDetails:\n' + data.details.join('\n');
+                    }
+                    throw new Error(errorMsg);
                 }
 
                 // Display the results
                 let result = `<strong>Input Text:</strong> ${escapeHtml(data.inputText)}<br><br>`;
-                result += `<strong>Number of Reviews:</strong> ${data.numReviews}<br><br>`;
-                result += `<strong>Configuration:</strong> ${data.message}`;
+                result += `<strong>Generated Reviews:</strong> ${data.successCount} of ${data.numReviews}<br><br>`;
+                
+                if (data.reviews && data.reviews.length > 0) {
+                    data.reviews.forEach((reviewItem, index) => {
+                        result += `<div style="margin-bottom: 20px; padding: 15px; background: #333333; border-radius: 8px; border-left: 3px solid #ffffff;">`;
+                        result += `<strong style="color: #ffffff;">Review ${reviewItem.index}:</strong><br>`;
+                        result += `<div style="color: #cccccc; margin-top: 10px; line-height: 1.6;">${escapeHtml(reviewItem.review)}</div>`;
+                        result += `</div>`;
+                    });
+                }
+                
+                if (data.errors && data.errors.length > 0) {
+                    result += `<div style="margin-top: 15px; color: #ff6b6b;"><strong>Errors:</strong><br>`;
+                    data.errors.forEach(error => {
+                        result += `• ${escapeHtml(error)}<br>`;
+                    });
+                    result += `</div>`;
+                }
 
                 outputContent.innerHTML = result;
                 output.classList.add('show');
