@@ -47,6 +47,316 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='scripts.js') }}"></script>
+    <!-- Modal for metadata -->
+    <div class="modal" id="metadataModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Persona Details</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+        </div>
+    </div>
+
+    <script>
+        const reviewCountSlider = document.getElementById('reviewCount');
+        const reviewCountValue = document.getElementById('reviewCountValue');
+        const ageMinSlider = document.getElementById('ageMin');
+        const ageMinValue = document.getElementById('ageMinValue');
+        const ageMaxSlider = document.getElementById('ageMax');
+        const ageMaxValue = document.getElementById('ageMaxValue');
+        const textInput = document.getElementById('textInput');
+        const genderSelect = document.getElementById('gender');
+        const locationSelect = document.getElementById('location');
+        const output = document.getElementById('output');
+        const outputContent = document.getElementById('outputContent');
+        const errorDiv = document.getElementById('error');
+        const generateButton = document.getElementById('generateButton');
+
+        // Track selected characteristics
+        let selectedCharacteristics = new Set();
+
+        // Update slider value displays
+        reviewCountSlider.addEventListener('input', function() {
+            reviewCountValue.textContent = this.value;
+        });
+
+        function updateAgeRange(event) {
+            const minValue = parseInt(ageMinSlider.value);
+            const maxValue = parseInt(ageMaxSlider.value);
+            const changedSlider = event ? event.target : null;
+            
+            // Ensure min doesn't exceed max and vice versa
+            if (minValue > maxValue) {
+                if (changedSlider === ageMinSlider) {
+                    ageMinSlider.value = maxValue;
+                    ageMinValue.textContent = maxValue;
+                } else {
+                    ageMaxSlider.value = minValue;
+                    ageMaxValue.textContent = minValue;
+                }
+            } else {
+                ageMinValue.textContent = ageMinSlider.value;
+                ageMaxValue.textContent = ageMaxSlider.value;
+            }
+            
+            // Update the visual progress bar
+            const min = parseInt(ageMinSlider.min);
+            const max = parseInt(ageMinSlider.max);
+            const currentMin = parseInt(ageMinSlider.value);
+            const currentMax = parseInt(ageMaxSlider.value);
+            
+            const minPercent = ((currentMin - min) / (max - min)) * 100;
+            const maxPercent = ((currentMax - min) / (max - min)) * 100;
+            
+            const progressBar = document.getElementById('ageRangeProgress');
+            progressBar.style.left = minPercent + '%';
+            progressBar.style.width = (maxPercent - minPercent) + '%';
+        }
+
+        ageMinSlider.addEventListener('input', updateAgeRange);
+        ageMaxSlider.addEventListener('input', updateAgeRange);
+        
+        // Initialize the progress bar on page load
+        updateAgeRange(null);
+
+        function toggleCharacteristic(button) {
+            const characteristic = button.getAttribute('data-characteristic');
+
+            if (selectedCharacteristics.has(characteristic)) {
+                selectedCharacteristics.delete(characteristic);
+                button.classList.remove('selected');
+            } else {
+                selectedCharacteristics.add(characteristic);
+                button.classList.add('selected');
+            }
+        }
+
+        async function handleSubmit() {
+            const text = textInput.value;
+            const numReviews = parseInt(reviewCountSlider.value);
+            const ageMin = parseInt(ageMinSlider.value);
+            const ageMax = parseInt(ageMaxSlider.value);
+            const gender = genderSelect.value;
+            const location = locationSelect.value;
+            const characteristics = Array.from(selectedCharacteristics);
+
+            if (!text.trim()) {
+                showError('Please enter a product idea first!');
+                return;
+            }
+
+            if (characteristics.length === 0) {
+                showError('Please select at least one characteristic for your customer personas!');
+                return;
+            }
+
+            // Hide previous output and error
+            output.classList.remove('show');
+            errorDiv.classList.remove('show');
+
+            // Disable button and show loading state
+            generateButton.disabled = true;
+            generateButton.textContent = 'Generating...';
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        numReviews: numReviews,
+                        ageMin: ageMin,
+                        ageMax: ageMax,
+                        gender: gender,
+                        location: location,
+                        characteristics: characteristics
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    let errorMsg = data.error || 'An error occurred';
+                    if (data.details && data.details.length > 0) {
+                        errorMsg += '\n\nDetails:\n' + data.details.join('\n');
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                // Display the results
+                let result = `<strong>Product Concept:</strong> ${escapeHtml(data.inputText)}<br><br>`;
+
+                // Calculate average rating
+                let averageRating = 0;
+                if (data.reviews && data.reviews.length > 0) {
+                    const totalRating = data.reviews.reduce((sum, review) => sum + review.metadata.sentiment_rating, 0);
+                    averageRating = (totalRating / data.reviews.length).toFixed(1);
+                }
+
+                result += `<strong>Average Rating:</strong> ${averageRating}/10<br><br>`;
+
+                if (data.reviews && data.reviews.length > 0) {
+                    result += `<div class="reviews-grid">`;
+                    data.reviews.forEach((reviewItem) => {
+                        const sentimentRating = reviewItem.metadata.sentiment_rating;
+
+                        // Determine sentiment class based on rating
+                        let sentimentClass;
+                        if (sentimentRating >= 8) {
+                            sentimentClass = 'sentiment-positive';
+                        } else if (sentimentRating >= 4) {
+                            sentimentClass = 'sentiment-neutral';
+                        } else {
+                            sentimentClass = 'sentiment-negative';
+                        }
+
+                        result += `<div class="review-box ${sentimentClass}" onclick='showMetadata(${JSON.stringify(reviewItem)})'>`;
+                        result += `<div class="review-header">`;
+                        result += `<span class="review-index">Persona #${reviewItem.index}</span>`;
+                        result += `<span class="sentiment-badge ${sentimentClass}">${sentimentRating}/10</span>`;
+                        result += `</div>`;
+                        result += `<div class="review-text">${escapeHtml(reviewItem.review)}</div>`;
+                        result += `<div class="review-footer">`;
+
+                        // Show characteristics with their intensities
+                        const charDisplay = reviewItem.metadata.characteristics.map(char => {
+                            const intensity = reviewItem.metadata.characteristic_intensities[char];
+                            const intensityLabel = Math.round(intensity * 100) + '%';
+                            return `${char} (${intensityLabel})`;
+                        }).join(', ');
+
+                        result += `${charDisplay}`;
+                        result += `</div>`;
+                        result += `</div>`;
+                    });
+                    result += `</div>`;
+                }
+
+                if (data.errors && data.errors.length > 0) {
+                    result += `<div style="margin-top: 15px; color: #ff6b6b;"><strong>Errors:</strong><br>`;
+                    data.errors.forEach(error => {
+                        result += `• ${escapeHtml(error)}<br>`;
+                    });
+                    result += `</div>`;
+                }
+
+                outputContent.innerHTML = result;
+                output.classList.add('show');
+            } catch (error) {
+                showError(error.message || 'An error occurred while processing your request.');
+            } finally {
+                generateButton.disabled = false;
+                generateButton.textContent = 'Generate';
+            }
+        }
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showMetadata(reviewItem) {
+            const modal = document.getElementById('metadataModal');
+            const modalBody = document.getElementById('modalBody');
+
+            const metadata = reviewItem.metadata;
+
+            let content = `
+                <div class="review-full-text">
+                    <div class="metadata-label">Customer Feedback</div>
+                    <div>${escapeHtml(reviewItem.review)}</div>
+                </div>
+
+                <div class="metadata-item">
+                    <div class="metadata-label">Persona Profile</div>
+                    <div class="metadata-value">${escapeHtml(metadata.personality_description)}</div>
+                </div>
+
+                <div class="metadata-item">
+                    <div class="metadata-label">Sentiment Rating</div>
+                    <div class="metadata-value">${metadata.sentiment_rating}/10 ${metadata.sentiment_rating >= 8 ? '(Positive)' : metadata.sentiment_rating >= 4 ? '(Neutral)' : '(Negative)'}</div>
+                </div>
+
+                <div class="metadata-item">
+                    <div class="metadata-label">Characteristics with Individual Intensities</div>
+                    <div class="metadata-value">
+            `;
+
+            // List each characteristic with its intensity
+            metadata.characteristics.forEach(char => {
+                const intensity = metadata.characteristic_intensities[char];
+                const intensityPercent = Math.round(intensity * 100);
+                content += `
+                    <div style="margin: 8px 0; padding: 8px; background: #333333; border-radius: 6px; border-left: 3px solid #ffffff;">
+                        <strong>${escapeHtml(char)}</strong>: ${intensityPercent}%
+                    </div>
+                `;
+            });
+
+            content += `
+                    </div>
+                </div>
+            `;
+
+            if (metadata.age_range) {
+                content += `
+                    <div class="metadata-item">
+                        <div class="metadata-label">Age Range</div>
+                        <div class="metadata-value">${escapeHtml(metadata.age_range)}</div>
+                    </div>
+                `;
+            }
+
+            if (metadata.gender) {
+                content += `
+                    <div class="metadata-item">
+                        <div class="metadata-label">Gender</div>
+                        <div class="metadata-value">${escapeHtml(metadata.gender)}</div>
+                    </div>
+                `;
+            }
+
+            if (metadata.location) {
+                content += `
+                    <div class="metadata-item">
+                        <div class="metadata-label">Location</div>
+                        <div class="metadata-value">${escapeHtml(metadata.location)}</div>
+                    </div>
+                `;
+            }
+
+            modalBody.innerHTML = content;
+            modal.classList.add('show');
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('metadataModal');
+            modal.classList.remove('show');
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('metadataModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+
+        // Close modal on ESC key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeModal();
+            }
+        });
+    </script>
 </body>
 </html>
