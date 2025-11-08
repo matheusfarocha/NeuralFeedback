@@ -3,20 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NeuralFeedback - Review Generator</title>
+    <title>NeuralFeedback - Product Concept Testing</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
         <h1>NeuralFeedback</h1>
-        
+        <p style="color: #888888; text-align: center; margin-bottom: 30px; font-size: 0.95em;">Test your product ideas with AI-simulated customer personas</p>
+
         <div class="input-group">
-            <label for="textInput">Text Input</label>
-            <textarea id="textInput" placeholder="Enter your text here..."></textarea>
+            <label for="textInput">Product Idea / Concept</label>
+            <textarea id="textInput" placeholder="Describe your product idea (e.g., 'waterbottle with blue color branding' or 'eco-friendly smartphone case with built-in stand')"></textarea>
+        </div>
+
+        <div class="characteristics-section">
+            <label>Target Customer Characteristics</label>
+            <p class="characteristics-hint">Select personality traits for your simulated customer personas (all will have these traits with varying intensities)</p>
+            <div class="characteristics-grid" id="characteristicsGrid">
+                {% for characteristic in characteristics %}
+                <button class="characteristic-btn" data-characteristic="{{ characteristic }}" onclick="toggleCharacteristic(this)">
+                    {{ characteristic|title }}
+                </button>
+                {% endfor %}
+            </div>
         </div>
 
         <div class="slider-container">
-            <label for="reviewCount">Number of Reviews: <span class="slider-value" id="reviewCountValue">5</span></label>
+            <label for="reviewCount">Number of Responses: <span class="slider-value" id="reviewCountValue">5</span></label>
             <div class="slider-wrapper">
                 <input type="range" id="reviewCount" class="slider" min="1" max="20" value="5">
             </div>
@@ -63,8 +76,19 @@
         <div class="error" id="error"></div>
 
         <div class="output" id="output">
-            <h2>Output</h2>
+            <h2>Customer Feedback</h2>
             <div class="output-content" id="outputContent"></div>
+        </div>
+    </div>
+
+    <!-- Modal for metadata -->
+    <div class="modal" id="metadataModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Persona Details</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
         </div>
     </div>
 
@@ -82,6 +106,9 @@
         const outputContent = document.getElementById('outputContent');
         const errorDiv = document.getElementById('error');
         const generateButton = document.getElementById('generateButton');
+
+        // Track selected characteristics
+        let selectedCharacteristics = new Set();
 
         // Update slider value displays
         reviewCountSlider.addEventListener('input', function() {
@@ -127,6 +154,18 @@
         // Initialize the progress bar on page load
         updateAgeRange(null);
 
+        function toggleCharacteristic(button) {
+            const characteristic = button.getAttribute('data-characteristic');
+
+            if (selectedCharacteristics.has(characteristic)) {
+                selectedCharacteristics.delete(characteristic);
+                button.classList.remove('selected');
+            } else {
+                selectedCharacteristics.add(characteristic);
+                button.classList.add('selected');
+            }
+        }
+
         async function handleSubmit() {
             const text = textInput.value;
             const numReviews = parseInt(reviewCountSlider.value);
@@ -134,9 +173,15 @@
             const ageMax = parseInt(ageMaxSlider.value);
             const gender = genderSelect.value;
             const location = locationSelect.value;
+            const characteristics = Array.from(selectedCharacteristics);
 
             if (!text.trim()) {
-                showError('Please enter some text first!');
+                showError('Please enter a product idea first!');
+                return;
+            }
+
+            if (characteristics.length === 0) {
+                showError('Please select at least one characteristic for your customer personas!');
                 return;
             }
 
@@ -160,7 +205,8 @@
                         ageMin: ageMin,
                         ageMax: ageMax,
                         gender: gender,
-                        location: location
+                        location: location,
+                        characteristics: characteristics
                     })
                 });
 
@@ -175,18 +221,46 @@
                 }
 
                 // Display the results
-                let result = `<strong>Input Text:</strong> ${escapeHtml(data.inputText)}<br><br>`;
-                result += `<strong>Generated Reviews:</strong> ${data.successCount} of ${data.numReviews}<br><br>`;
-                
+                let result = `<strong>Product Concept:</strong> ${escapeHtml(data.inputText)}<br><br>`;
+                result += `<strong>Customer Feedback Responses:</strong> ${data.successCount} of ${data.numReviews}<br><br>`;
+
                 if (data.reviews && data.reviews.length > 0) {
-                    data.reviews.forEach((reviewItem, index) => {
-                        result += `<div style="margin-bottom: 20px; padding: 15px; background: #333333; border-radius: 8px; border-left: 3px solid #ffffff;">`;
-                        result += `<strong style="color: #ffffff;">Review ${reviewItem.index}:</strong><br>`;
-                        result += `<div style="color: #cccccc; margin-top: 10px; line-height: 1.6;">${escapeHtml(reviewItem.review)}</div>`;
+                    result += `<div class="reviews-grid">`;
+                    data.reviews.forEach((reviewItem) => {
+                        const sentimentRating = reviewItem.metadata.sentiment_rating;
+
+                        // Determine sentiment class based on rating
+                        let sentimentClass;
+                        if (sentimentRating >= 8) {
+                            sentimentClass = 'sentiment-positive';
+                        } else if (sentimentRating >= 4) {
+                            sentimentClass = 'sentiment-neutral';
+                        } else {
+                            sentimentClass = 'sentiment-negative';
+                        }
+
+                        result += `<div class="review-box ${sentimentClass}" onclick='showMetadata(${JSON.stringify(reviewItem)})'>`;
+                        result += `<div class="review-header">`;
+                        result += `<span class="review-index">Persona #${reviewItem.index}</span>`;
+                        result += `<span class="sentiment-badge ${sentimentClass}">${sentimentRating}/10</span>`;
+                        result += `</div>`;
+                        result += `<div class="review-text">${escapeHtml(reviewItem.review)}</div>`;
+                        result += `<div class="review-footer">`;
+
+                        // Show characteristics with their intensities
+                        const charDisplay = reviewItem.metadata.characteristics.map(char => {
+                            const intensity = reviewItem.metadata.characteristic_intensities[char];
+                            const intensityLabel = Math.round(intensity * 100) + '%';
+                            return `${char} (${intensityLabel})`;
+                        }).join(', ');
+
+                        result += `${charDisplay}`;
+                        result += `</div>`;
                         result += `</div>`;
                     });
+                    result += `</div>`;
                 }
-                
+
                 if (data.errors && data.errors.length > 0) {
                     result += `<div style="margin-top: 15px; color: #ff6b6b;"><strong>Errors:</strong><br>`;
                     data.errors.forEach(error => {
@@ -215,6 +289,100 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        function showMetadata(reviewItem) {
+            const modal = document.getElementById('metadataModal');
+            const modalBody = document.getElementById('modalBody');
+
+            const metadata = reviewItem.metadata;
+
+            let content = `
+                <div class="review-full-text">
+                    <div class="metadata-label">Customer Feedback</div>
+                    <div>${escapeHtml(reviewItem.review)}</div>
+                </div>
+
+                <div class="metadata-item">
+                    <div class="metadata-label">Persona Profile</div>
+                    <div class="metadata-value">${escapeHtml(metadata.personality_description)}</div>
+                </div>
+
+                <div class="metadata-item">
+                    <div class="metadata-label">Sentiment Rating</div>
+                    <div class="metadata-value">${metadata.sentiment_rating}/10 ${metadata.sentiment_rating >= 8 ? '(Positive)' : metadata.sentiment_rating >= 4 ? '(Neutral)' : '(Negative)'}</div>
+                </div>
+
+                <div class="metadata-item">
+                    <div class="metadata-label">Characteristics with Individual Intensities</div>
+                    <div class="metadata-value">
+            `;
+
+            // List each characteristic with its intensity
+            metadata.characteristics.forEach(char => {
+                const intensity = metadata.characteristic_intensities[char];
+                const intensityPercent = Math.round(intensity * 100);
+                content += `
+                    <div style="margin: 8px 0; padding: 8px; background: #333333; border-radius: 6px; border-left: 3px solid #ffffff;">
+                        <strong>${escapeHtml(char)}</strong>: ${intensityPercent}%
+                    </div>
+                `;
+            });
+
+            content += `
+                    </div>
+                </div>
+            `;
+
+            if (metadata.age_range) {
+                content += `
+                    <div class="metadata-item">
+                        <div class="metadata-label">Age Range</div>
+                        <div class="metadata-value">${escapeHtml(metadata.age_range)}</div>
+                    </div>
+                `;
+            }
+
+            if (metadata.gender) {
+                content += `
+                    <div class="metadata-item">
+                        <div class="metadata-label">Gender</div>
+                        <div class="metadata-value">${escapeHtml(metadata.gender)}</div>
+                    </div>
+                `;
+            }
+
+            if (metadata.location) {
+                content += `
+                    <div class="metadata-item">
+                        <div class="metadata-label">Location</div>
+                        <div class="metadata-value">${escapeHtml(metadata.location)}</div>
+                    </div>
+                `;
+            }
+
+            modalBody.innerHTML = content;
+            modal.classList.add('show');
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('metadataModal');
+            modal.classList.remove('show');
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('metadataModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+
+        // Close modal on ESC key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeModal();
+            }
+        });
     </script>
 </body>
 </html>
