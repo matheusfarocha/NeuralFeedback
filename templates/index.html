@@ -22,6 +22,42 @@
             </div>
         </div>
 
+        <div class="slider-container">
+            <label for="ageRange">Age Range: <span class="slider-value" id="ageMinValue">18</span> - <span class="slider-value" id="ageMaxValue">65</span></label>
+            <div class="dual-range-wrapper">
+                <input type="range" id="ageMin" class="dual-range dual-range-min" min="18" max="100" value="18">
+                <input type="range" id="ageMax" class="dual-range dual-range-max" min="18" max="100" value="65">
+                <div class="dual-range-track">
+                    <div class="dual-range-progress" id="ageRangeProgress"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-group">
+            <label for="gender">Gender</label>
+            <select id="gender" class="select-input">
+                <option value="">Select gender...</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="non-binary">Non-binary</option>
+                <option value="prefer-not-to-say">Prefer not to say</option>
+            </select>
+        </div>
+
+        <div class="input-group">
+            <label for="location">Location</label>
+            <select id="location" class="select-input">
+                <option value="">Select location...</option>
+                <option value="North America">North America</option>
+                <option value="South America">South America</option>
+                <option value="Europe">Europe</option>
+                <option value="Asia">Asia</option>
+                <option value="Africa">Africa</option>
+                <option value="Australia">Australia</option>
+                <option value="Middle East">Middle East</option>
+            </select>
+        </div>
+
         <button class="button" id="generateButton" onclick="handleSubmit()">Generate</button>
 
         <div class="error" id="error"></div>
@@ -35,7 +71,13 @@
     <script>
         const reviewCountSlider = document.getElementById('reviewCount');
         const reviewCountValue = document.getElementById('reviewCountValue');
+        const ageMinSlider = document.getElementById('ageMin');
+        const ageMinValue = document.getElementById('ageMinValue');
+        const ageMaxSlider = document.getElementById('ageMax');
+        const ageMaxValue = document.getElementById('ageMaxValue');
         const textInput = document.getElementById('textInput');
+        const genderSelect = document.getElementById('gender');
+        const locationSelect = document.getElementById('location');
         const output = document.getElementById('output');
         const outputContent = document.getElementById('outputContent');
         const errorDiv = document.getElementById('error');
@@ -46,9 +88,52 @@
             reviewCountValue.textContent = this.value;
         });
 
+        function updateAgeRange(event) {
+            const minValue = parseInt(ageMinSlider.value);
+            const maxValue = parseInt(ageMaxSlider.value);
+            const changedSlider = event ? event.target : null;
+            
+            // Ensure min doesn't exceed max and vice versa
+            if (minValue > maxValue) {
+                if (changedSlider === ageMinSlider) {
+                    ageMinSlider.value = maxValue;
+                    ageMinValue.textContent = maxValue;
+                } else {
+                    ageMaxSlider.value = minValue;
+                    ageMaxValue.textContent = minValue;
+                }
+            } else {
+                ageMinValue.textContent = ageMinSlider.value;
+                ageMaxValue.textContent = ageMaxSlider.value;
+            }
+            
+            // Update the visual progress bar
+            const min = parseInt(ageMinSlider.min);
+            const max = parseInt(ageMinSlider.max);
+            const currentMin = parseInt(ageMinSlider.value);
+            const currentMax = parseInt(ageMaxSlider.value);
+            
+            const minPercent = ((currentMin - min) / (max - min)) * 100;
+            const maxPercent = ((currentMax - min) / (max - min)) * 100;
+            
+            const progressBar = document.getElementById('ageRangeProgress');
+            progressBar.style.left = minPercent + '%';
+            progressBar.style.width = (maxPercent - minPercent) + '%';
+        }
+
+        ageMinSlider.addEventListener('input', updateAgeRange);
+        ageMaxSlider.addEventListener('input', updateAgeRange);
+        
+        // Initialize the progress bar on page load
+        updateAgeRange(null);
+
         async function handleSubmit() {
             const text = textInput.value;
             const numReviews = parseInt(reviewCountSlider.value);
+            const ageMin = parseInt(ageMinSlider.value);
+            const ageMax = parseInt(ageMaxSlider.value);
+            const gender = genderSelect.value;
+            const location = locationSelect.value;
 
             if (!text.trim()) {
                 showError('Please enter some text first!');
@@ -71,7 +156,11 @@
                     },
                     body: JSON.stringify({
                         text: text,
-                        numReviews: numReviews
+                        numReviews: numReviews,
+                        ageMin: ageMin,
+                        ageMax: ageMax,
+                        gender: gender,
+                        location: location
                     })
                 });
 
