@@ -1,12 +1,15 @@
 # NeuralFeedback
 
-A Flask web application for generating reviews with customizable parameters.
+A Flask web application for generating reviews with customizable parameters using Google Gemini API.
 
 ## Features
 
 - Text input for review content
 - Slider control for number of reviews (1-20)
+- Age range selector (dual-range slider)
+- Gender and location dropdowns for context
 - Modern, responsive UI with black theme
+- AI-powered review generation with personality traits (energetic, critical, logical, emotional, etc.)
 
 ## Setup
 
@@ -17,10 +20,9 @@ pip install -r requirements.txt
 
 2. Set up environment variables:
    - Create a `.env` file in the root directory
-   - Add your API keys to the `.env` file:
+   - Add your Gemini API key to the `.env` file:
    ```
-   API_KEY=your_api_key_here
-   OPENAI_API_KEY=your_openai_api_key_here
+   GEMINI_API_KEY=your_gemini_api_key_here
    ```
    - **Never commit the `.env` file to version control** (it's already in `.gitignore`)
 
@@ -38,20 +40,16 @@ http://localhost:5000
 
 1. Enter text in the text input field
 2. Adjust the number of reviews using the slider
-3. Click "Generate" to process your request
+3. Set age range, gender, and location (optional context)
+4. Click "Generate" to generate multiple review variations with different personality traits
 
 ## Environment Variables
 
-The application uses environment variables for API keys. Create a `.env` file in the root directory with your API keys:
+The application uses environment variables for API keys. Create a `.env` file in the root directory with your Gemini API key:
 
 ```
-API_KEY=your_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-Access these in your code using:
-```python
-import os
-api_key = os.getenv('API_KEY')
-```
+You can get a Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey).
 

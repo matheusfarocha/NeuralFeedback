@@ -1,34 +1,60 @@
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 import os
-import requests
+import google.generativeai as genai
 
 # Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
 
-# Load API keys from environment variables
-NEURALSEEK_API_KEY = os.getenv('NEURALSEEK_API_KEY')
+# Load Gemini API key from environment variables
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-# NeuralSeek API configuration
-# Base URL: https://stagingapi.neuralseek.com/v1/{instance}
-# Instance: stony39
-# Endpoint: /seek
-NEURALSEEK_API_BASE_URL = os.getenv('NEURALSEEK_API_BASE_URL', "https://stagingapi.neuralseek.com/v1/stony39")
-NEURALSEEK_API_ENDPOINT = "/seek"
+# Configure Gemini API
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 @app.route('/')
 def index():
     """Render the main page"""
     return render_template('index.html')
 
-def generate_review_variation(prompt, variation_index, age_min=None, age_max=None, gender=None, location=None):
+def generate_review(prompt, variation_index, age_min=None, age_max=None, gender=None, location=None):
     """
-    Generate a review variation by slightly modifying the prompt.
-    This creates different perspectives for each review.
-    Includes context information if provided.
+    Generate a review using Gemini API with personality traits as context.
+    Each review has a slightly different personality (energetic, critical, logical, emotional, etc.)
     """
+    if not GEMINI_API_KEY:
+        return None, "Gemini API key not configured"
+    
+    # Personality traits that vary for each review
+    personality_traits = [
+        "slightly more energetic and enthusiastic",
+        "slightly more critical and analytical",
+        "slightly more logical and methodical",
+        "slightly more emotional and expressive",
+        "slightly more optimistic and positive",
+        "slightly more skeptical and cautious",
+        "slightly more detailed and thorough",
+        "slightly more concise and direct",
+        "slightly more creative and imaginative",
+        "slightly more practical and pragmatic",
+        "slightly more passionate and intense",
+        "slightly more balanced and measured",
+        "slightly more curious and exploratory",
+        "slightly more experienced and knowledgeable",
+        "slightly more casual and relaxed",
+        "slightly more formal and professional",
+        "slightly more humorous and lighthearted",
+        "slightly more serious and focused",
+        "slightly more empathetic and understanding",
+        "slightly more objective and unbiased"
+    ]
+    
+    # Get personality trait for this variation
+    personality = personality_traits[variation_index % len(personality_traits)]
+    
     # Build context string if any context is provided
     context_parts = []
     if age_min and age_max:
@@ -45,112 +71,38 @@ def generate_review_variation(prompt, variation_index, age_min=None, age_max=Non
     if location:
         context_parts.append(f"from {location}")
     
-    context_str = f" (as a {', '.join(context_parts)})" if context_parts else ""
+    # Build the full context string
+    if context_parts:
+        reviewer_context = f"as a reviewer who is {personality}, {', '.join(context_parts)}"
+    else:
+        reviewer_context = f"as a reviewer who is {personality}"
     
-    variations = [
-        f"Provide a detailed review of: {prompt}{context_str}",
-        f"Give your honest opinion about: {prompt}{context_str}",
-        f"Analyze and critique: {prompt}{context_str}",
-        f"Evaluate from a professional perspective: {prompt}{context_str}",
-        f"Share your thoughts on: {prompt}{context_str}",
-        f"Review with focus on quality: {prompt}{context_str}",
-        f"Provide constructive feedback on: {prompt}{context_str}",
-        f"Assess the strengths and weaknesses of: {prompt}{context_str}",
-        f"Give a comprehensive review of: {prompt}{context_str}",
-        f"Analyze from a user experience perspective: {prompt}{context_str}",
-        f"Review with emphasis on value: {prompt}{context_str}",
-        f"Provide an in-depth analysis of: {prompt}{context_str}",
-        f"Evaluate the overall quality of: {prompt}{context_str}",
-        f"Share a detailed assessment of: {prompt}{context_str}",
-        f"Review with attention to detail: {prompt}{context_str}",
-        f"Provide feedback from different angles: {prompt}{context_str}",
-        f"Analyze the key aspects of: {prompt}{context_str}",
-        f"Give a balanced review of: {prompt}{context_str}",
-        f"Evaluate considering various factors: {prompt}{context_str}",
-        f"Provide a thorough review of: {prompt}{context_str}"
-    ]
-    
-    # Use variation_index to get different prompt variations
-    return variations[variation_index % len(variations)]
+    # Create the prompt for Gemini
+    gemini_prompt = f"""Write a review about: {prompt}
 
+You are writing this review {reviewer_context}. 
 
-def call_neuralseek_api(question, age_min=None, age_max=None, gender=None, location=None):
-    """
-    Call the NeuralSeek API to get a review/answer.
-    According to NeuralSeek API documentation:
-    - Base URL: https://stagingapi.neuralseek.com/v1/stony39
-    - Endpoint: /seek
-    - Method: POST
-    - Authentication: apikey header (lowercase)
-    - Request Body: {"question": "string", "user_session": {...}}
-    - Response: {"answer": "string", "score": number, ...}
-    """
-    if not NEURALSEEK_API_KEY:
-        return None, "API key not configured"
+Write a sample review that reflects this personality and context. The review should be natural, authentic, and demonstrate the personality trait in the writing style and tone. Keep it concise but meaningful (2-4 sentences)."""
     
     try:
-        # NeuralSeek API uses 'apikey' header (lowercase) for authentication
-        headers = {
-            "accept": "application/json",
-            "apikey": NEURALSEEK_API_KEY,
-            "Content-Type": "application/json"
-        }
+        # Use gemini-2.0-flash-exp directly
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
         
-        # Request body according to API documentation
-        payload = {
-            "question": question
-        }
+        # Generate the review
+        response = model.generate_content(gemini_prompt)
         
-        # Add user session metadata if context is provided
-        if age_min or age_max or gender or location:
-            user_metadata = {}
-            if age_min and age_max:
-                if age_min == age_max:
-                    user_metadata["age"] = str(age_min)
-                else:
-                    user_metadata["age_range"] = f"{age_min}-{age_max}"
-            elif age_min:
-                user_metadata["age_min"] = str(age_min)
-            elif age_max:
-                user_metadata["age_max"] = str(age_max)
-            if gender:
-                user_metadata["gender"] = gender
-            if location:
-                user_metadata["location"] = location
-            
-            payload["user_session"] = {
-                "metadata": user_metadata
-            }
+        # Extract the review text
+        review_text = response.text.strip()
         
-        # Full API URL
-        api_url = f"{NEURALSEEK_API_BASE_URL}{NEURALSEEK_API_ENDPOINT}"
+        return review_text, None
         
-        response = requests.post(
-            api_url,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            # Extract answer from response (according to API docs, response has 'answer' field)
-            answer = data.get('answer', '')
-            if not answer:
-                return None, f"API response missing 'answer' field: {data}"
-            return answer, None
-        else:
-            return None, f"API error: {response.status_code} - {response.text[:500]}"
-            
-    except requests.exceptions.RequestException as e:
-        return None, f"Request failed: {str(e)}"
     except Exception as e:
-        return None, f"Error: {str(e)}"
+        return None, f"Error generating review: {str(e)}"
 
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    """Handle form submission and generate multiple reviews using NeuralSeek API"""
+    """Handle form submission and generate multiple reviews using Gemini API"""
     data = request.get_json()
     
     text = data.get('text', '').strip()
@@ -163,25 +115,22 @@ def generate():
     if not text:
         return jsonify({'error': 'Please enter some text first!'}), 400
     
-    if not NEURALSEEK_API_KEY:
-        return jsonify({'error': 'NeuralSeek API key not configured'}), 500
+    if not GEMINI_API_KEY:
+        return jsonify({'error': 'Gemini API key not configured'}), 500
     
     reviews = []
     errors = []
     
-    # Generate multiple reviews with slightly different prompts
+    # Generate multiple reviews with variations
     for i in range(num_reviews):
-        # Create a variation of the prompt for each review (with context)
-        varied_prompt = generate_review_variation(text, i, age_min, age_max, gender, location)
-        
-        # Call NeuralSeek API with context
-        review, error = call_neuralseek_api(varied_prompt, age_min, age_max, gender, location)
+        # Generate review using Gemini API with personality traits
+        review, error = generate_review(text, i, age_min, age_max, gender, location)
         
         if review:
             reviews.append({
                 'index': i + 1,
                 'review': review,
-                'prompt': varied_prompt
+                'prompt': text
             })
         else:
             errors.append(f"Review {i + 1}: {error}")
