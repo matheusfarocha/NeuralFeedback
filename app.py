@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import os
 
 # Utility imports for processing and error handling
+import json
 import math
 import random
 import re
@@ -69,6 +70,21 @@ ALLOWED_EXTENSIONS = {"pdf", "doc", "docx"}
 def allowed_file(filename):
     """Check if file extension is allowed."""
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def parse_int(value):
+    """Safely parse integers from form inputs."""
+    try:
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        value = str(value).strip()
+        if not value:
+            return None
+        return int(value)
+    except (ValueError, TypeError):
+        return None
 
 
 def extract_text_from_pdf(file):
@@ -172,100 +188,190 @@ def generate_review(  # pylint: disable=too-many-arguments
         return None, "No characteristics selected"
 
     intensity_labels = {0.9: "somewhat", 1.0: "moderately", 1.1: "very"}
-    personality_parts = []
-
-
+    trait_descriptions = []
     for char in selected_characteristics:
         intensity_value = characteristic_intensities.get(char, 1.0)
-        personality_parts.append(f"{intensity_labels.get(intensity_value, 'moderately')} {char}")
+        trait_descriptions.append(f"{intensity_labels.get(intensity_value, 'moderately')} {char}")
 
-    if len(personality_parts) > 1:
-        personality = ", ".join(personality_parts[:-1]) + f", and {personality_parts[-1]}"
-    else:
-        personality = personality_parts[0]
+    personality_summary = ", ".join(trait_descriptions)
 
-    # Build demographic context parts (age, gender, location)
-    context_parts = []
-    generated_age = None
+    age_min_val = parse_int(age_min)
+    age_max_val = parse_int(age_max)
 
-    if age_min and age_max:
-        generated_age = random.randint(age_min, age_max)
-        context_parts.append(f"age {generated_age}")
-    elif age_min:
-        generated_age = age_min
-        context_parts.append(f"age {age_min}+")
-    elif age_max:
-        generated_age = age_max
-        context_parts.append(f"age up to {age_max}")
+    persona_constraints = []
+    if age_min_val is not None and age_max_val is not None:
+        if age_min_val > age_max_val:
+            age_min_val, age_max_val = age_max_val, age_min_val
+        persona_constraints.append(f"Age between {age_min_val} and {age_max_val}")
+    elif age_min_val is not None:
+        persona_constraints.append(f"Age {age_min_val} or older")
+    elif age_max_val is not None:
+        persona_constraints.append(f"Age {age_max_val} or younger")
+
     if gender:
-        context_parts.append(f"gender {gender}")
+        persona_constraints.append(f"Gender: {gender}")
     if location:
-        context_parts.append(f"from {location}")
+        persona_constraints.append(f"Based in {location}")
 
-    reviewer_context = f"a potential customer who is {personality}"
-    if context_parts:
-        reviewer_context += f", {', '.join(context_parts)}"
+    constraints_text = "\n".join(f"- {item}" for item in persona_constraints) if persona_constraints else "- No specific demographic constraints provided."
+    traits_text = "\n".join(f"- {desc}" for desc in trait_descriptions)
 
-    # Build the prompt with optional document context
     document_context = ""
     if document_text and document_text.strip():
-        # Truncate document text if too long (keep first 3000 chars to avoid token limits)
         truncated_doc = document_text[:3000] + "..." if len(document_text) > 3000 else document_text
         document_context = f"""
 
-Additional context from attached document:
-{truncated_doc}
+Supporting material supplied by the user:
+\"\"\"{truncated_doc}\"\"\"
+"""
+
+    instruction_schema = """
+Return ONLY valid JSON (no code fences) with this structure:
+{
+  "persona": {
+    "name": "First Last",
+    "age": integer,
+    "gender": "Gender or leave empty",
+    "location": "City, Region or leave empty",
+    "profession": "Job title",
+    "tone": "One-word tone describing how they speak",
+    "descriptor": "Short sentence describing the persona",
+    "traits": ["list", "of", "traits"],
+    "motivations": "Optional short phrase about what drives them"
+  },
+  "review": {
+    "text": "2-4 sentences of authentic feedback grounded in the product idea and persona perspective.",
+    "rating": integer between 1 and 10,
+    "summary": "Optional one sentence TL;DR of the feedback"
+  }
+}
 """
 
     gemini_prompt = f"""
-You are a potential customer responding to a product idea.
-The product concept is: {prompt}
-{document_context}
-You are {reviewer_context}.
+You are crafting a realistic customer persona and their feedback about a product concept.
 
-Provide 2-4 sentences of authentic feedback. Afterwards, on a new line,
-add a rating between 1 and 10 formatted exactly as: RATING: X
+Product Concept:
+\"\"\"{prompt}\"\"\"
+
+Primary persona traits to embody:
+{traits_text}
+
+Persona constraints and user-supplied demographic preferences:
+{constraints_text}
+{document_context}
+
+Use every piece of provided information. The review must reference specifics from the product concept and any supporting document snippets when available.
+
+{instruction_schema}
+Fill in missing demographic fields with plausible details that still align with the constraints and traits. Keep the JSON concise, valid, and free of additional commentary.
 """
+
+    def build_metadata_from_text(raw_text):
+        """Fallback parser when JSON output is unavailable."""
+        rating_match = re.search(r"RATING:\s*(\d+)", raw_text, re.IGNORECASE)
+        rating = int(rating_match.group(1)) if rating_match else 5
+        rating = max(1, min(10, rating))
+        review_text = re.sub(r"\s*RATING:\s*\d+\s*$", "", raw_text, flags=re.IGNORECASE).strip()
+        if not review_text:
+            review_text = "No feedback received."
+
+        first_name = random.choice(FIRST_NAMES)
+        last_name = random.choice(LAST_NAMES)
+        persona_name = f"{first_name} {last_name}"
+        descriptor = f"{personality_summary} customer persona".strip().capitalize()
+        metadata = {
+            "persona_name": persona_name,
+            "persona_descriptor": descriptor,
+            "characteristics": selected_characteristics,
+            "characteristic_intensities": characteristic_intensities,
+            "sentiment_rating": rating,
+            "personality_description": descriptor,
+            "age_range": f"{age_min_val}-{age_max_val}" if age_min_val is not None and age_max_val is not None else None,
+            "age": None,
+            "gender": gender or None,
+            "location": location or None,
+            "tone": None,
+            "profession": None,
+            "traits_summary": personality_summary,
+            "source_documents_used": bool(document_text and document_text.strip()),
+        }
+        return review_text, metadata
 
     try:
         model = genai.GenerativeModel("gemini-2.0-flash-exp")
         response = model.generate_content(gemini_prompt)
-        full_text = (response.text or "").strip()
+        raw_output = (response.text or "").strip()
 
-        rating_match = re.search(r"RATING:\s*(\d+)", full_text, re.IGNORECASE)
+        cleaned_output = raw_output
+        if cleaned_output.startswith("```"):
+            cleaned_output = re.sub(r"^```(?:json)?", "", cleaned_output, flags=re.IGNORECASE).strip()
+            cleaned_output = re.sub(r"```$", "", cleaned_output).strip()
 
-        rating = int(rating_match.group(1)) if rating_match else 5
-        rating = max(1, min(10, rating))
-        review_text = re.sub(r"\s*RATING:\s*\d+\s*$", "", full_text, flags=re.IGNORECASE).strip()
+        parsed = None
+        if cleaned_output:
+            try:
+                parsed = json.loads(cleaned_output)
+            except json.JSONDecodeError:
+                print("⚠️ Gemini returned non-JSON response; falling back to text parser.")
+
+        if not parsed or not isinstance(parsed, dict):
+            review_text, metadata = build_metadata_from_text(raw_output)
+            return {"text": review_text, "metadata": metadata}, None
+
+        persona_info = parsed.get("persona", {}) or {}
+        review_info = parsed.get("review", {}) or {}
+
+        review_text = (review_info.get("text") or "").strip()
         if not review_text:
-            review_text = "No feedback received."
+            review_text, metadata = build_metadata_from_text(raw_output)
+            return {"text": review_text, "metadata": metadata}, None
 
-        # Generate random name for persona
-        first_name = random.choice(FIRST_NAMES)
-        last_name = random.choice(LAST_NAMES)
-        if generated_age:
-            persona_name = f"{first_name} {last_name}, {generated_age}"
-        else:
-            persona_name = f"{first_name} {last_name}"
+        rating_value = parse_int(review_info.get("rating"))
+        if rating_value is None:
+            rating_value = 5
+        rating_value = max(1, min(10, rating_value))
 
-        # Package review with metadata about the persona
+        persona_name = (persona_info.get("name") or "").strip()
+        if not persona_name:
+            persona_name = f"{random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
+
+        persona_age = parse_int(persona_info.get("age"))
+        persona_gender = (persona_info.get("gender") or gender or "").strip() or None
+        persona_location = (persona_info.get("location") or location or "").strip() or None
+        persona_profession = (persona_info.get("profession") or "").strip() or None
+        persona_tone = (persona_info.get("tone") or "").strip() or None
+        persona_descriptor = (persona_info.get("descriptor") or persona_info.get("summary") or "").strip()
+        if not persona_descriptor:
+            persona_descriptor = f"{personality_summary} customer persona".capitalize()
+
+        persona_traits = persona_info.get("traits")
+        if not isinstance(persona_traits, list) or not persona_traits:
+            persona_traits = selected_characteristics
+
         metadata = {
             "persona_name": persona_name,
-            "persona_descriptor": reviewer_context,
-            "characteristics": selected_characteristics,
+            "persona_descriptor": persona_descriptor,
+            "characteristics": persona_traits,
             "characteristic_intensities": characteristic_intensities,
-            "sentiment_rating": rating,
-            "personality_description": personality,
-            "age_range": f"{age_min}-{age_max}" if age_min and age_max else None,
-            "age": generated_age,
-            "gender": gender or None,
-            "location": location or None,
+            "sentiment_rating": rating_value,
+            "personality_description": persona_descriptor,
+            "age_range": f"{age_min_val}-{age_max_val}" if age_min_val is not None and age_max_val is not None else None,
+            "age": persona_age,
+            "gender": persona_gender,
+            "location": persona_location,
+            "profession": persona_profession,
+            "tone": persona_tone,
+            "motivations": persona_info.get("motivations"),
+            "traits_summary": personality_summary,
+            "source_documents_used": bool(document_text and document_text.strip()),
         }
+        review_summary = (review_info.get("summary") or "").strip()
+        if review_summary:
+            metadata["review_summary"] = review_summary
 
         return {"text": review_text, "metadata": metadata}, None
     except Exception as exc:  # pragma: no cover - network failure
         print("🔥 Error generating review:", exc)
-
         traceback.print_exc()
         return None, f"Gemini error: {exc}"
 
@@ -289,8 +395,33 @@ def generate_feedback_summary(reviews):
     formatted_feedbacks = []
     for review in reviews:
         review_text = review.get("review", "").strip()
-        if review_text:
-            review_id = review.get("id", len(formatted_feedbacks) + 1)
+        if not review_text:
+            continue
+
+        review_id = review.get("id", len(formatted_feedbacks) + 1)
+        metadata = review.get("metadata", {}) or {}
+        persona_name = metadata.get("persona_name")
+        profession = metadata.get("profession")
+        tone = metadata.get("tone")
+        location = metadata.get("location")
+        traits = metadata.get("characteristics") or []
+
+        persona_context_parts = []
+        if persona_name:
+            persona_context_parts.append(persona_name)
+        if profession:
+            persona_context_parts.append(profession)
+        if tone:
+            persona_context_parts.append(f"tone: {tone}")
+        if location:
+            persona_context_parts.append(location)
+        if traits:
+            persona_context_parts.append("traits: " + ", ".join(traits[:5]))
+
+        persona_context = " | ".join(persona_context_parts)
+        if persona_context:
+            formatted_feedbacks.append(f"{review_id}: ({persona_context}) {review_text}")
+        else:
             formatted_feedbacks.append(f"{review_id}: {review_text}")
 
     if not formatted_feedbacks:
@@ -416,10 +547,10 @@ def generate():
             text = (request.form.get("text") or "").strip()
             num_reviews = max(1, min(20, int(request.form.get("numReviews", 5))))
             selected_characteristics = request.form.getlist("characteristics") or []
-            age_min = request.form.get("ageMin")
-            age_max = request.form.get("ageMax")
-            gender = request.form.get("gender")
-            location = request.form.get("location")
+            age_min = parse_int(request.form.get("ageMin"))
+            age_max = parse_int(request.form.get("ageMax"))
+            gender = (request.form.get("gender") or "").strip() or None
+            location = (request.form.get("location") or "").strip() or None
             
             # Parse uploaded file if present
             document_text = None
@@ -440,10 +571,10 @@ def generate():
             text = (data.get("text") or "").strip()
             num_reviews = max(1, min(20, int(data.get("numReviews", 5))))
             selected_characteristics = data.get("characteristics", [])
-            age_min = data.get("ageMin")
-            age_max = data.get("ageMax")
-            gender = data.get("gender")
-            location = data.get("location")
+            age_min = parse_int(data.get("ageMin"))
+            age_max = parse_int(data.get("ageMax"))
+            gender = (data.get("gender") or "").strip() or None
+            location = (data.get("location") or "").strip() or None
             document_text = None
 
         # Validate required inputs
