@@ -30,12 +30,19 @@
 
       <div class="upload-section">
         <label for="ideaFile" class="upload-box">
-          <input type="file" id="ideaFile" class="hidden-input" />
-          <span>Attach a pitch deck, notes, or document (optional)</span>
+          <input type="file" id="ideaFile" class="hidden-input" accept=".pdf,.doc,.docx,.txt,.md" />
+          <span>Attach a PDF, DOC, or DOCX of your pitch deck, notes, or document (optional)</span>
         </label>
         <button class="btn-primary" onclick="document.getElementById('ideaFile').click();">
           Upload Supporting Detail
         </button>
+        <div id="attachmentDisplay" class="attachment-display hidden">
+          <div class="attachment-info">
+            <span class="attachment-icon">📎</span>
+            <span class="attachment-name" id="attachmentName"></span>
+          </div>
+          <button class="btn-remove" id="removeAttachment" onclick="removeAttachment()">✕</button>
+        </div>
       </div>
     </section>
 
@@ -63,12 +70,12 @@
 
         <label>Age Range:</label>
         <div class="dual-slider">
-          <input type="range" id="ageMin" min="18" max="100" value="18" class="dual-input" />
-          <input type="range" id="ageMax" min="18" max="100" value="65" class="dual-input" />
+          <input type="range" id="ageMin" min="1" max="100" value="1" class="dual-input" />
+          <input type="range" id="ageMax" min="1" max="100" value="65" class="dual-input" />
           <div class="dual-progress" id="ageRangeProgress"></div>
         </div>
         <div class="age-values">
-          <span id="ageMinValue">18</span>
+          <span id="ageMinValue">1</span>
           <span id="ageMaxValue">65</span>
         </div>
       </div>
