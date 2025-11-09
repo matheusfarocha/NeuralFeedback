@@ -118,6 +118,7 @@ textarea:focus {
   text-align: center;
   background: rgba(12, 18, 40, 0.6);
   transition: 0.3s;
+  cursor: pointer;
 }
 .upload-box:hover {
   background: rgba(20, 25, 60, 0.8);
