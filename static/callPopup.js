@@ -5,7 +5,7 @@
 
   let ringAudio, replyAudio, recognition;
   let isInCall = false, isProcessing = false, micAuthorized = !supportsSpeech;
-  let callPopup, statusEl, dialogEl, manualInput, sendBtn, hangupBtn, micBtn;
+  let callPopup, statusEl, dialogEl, hangupBtn, micBtn;
   let conversationLog = [];
   let currentPersona = { id: null, name: "", tone: "friendly", gender: "", review: "", descriptor: "" };
 
@@ -47,11 +47,7 @@
           <p id="callStatusText">Connecting…</p>
         </div>
         <div class="call-dialog" id="callDialog"></div>
-        <div class="call-manual-entry ${supportsSpeech ? "hidden" : ""}">
-          <textarea id="callTextInput" placeholder="Type your message…"></textarea>
-          <button id="callSendBtn" class="call-send-btn">Send</button>
-        </div>
-        <p class="call-footnote">${supportsSpeech ? "Tap 🎙️ to talk or speak automatically." : "Allow microphone access in Chrome for hands-free use."}</p>
+        <p class="call-footnote">Click 🎙️ to speak with the persona</p>
         <div class="call-controls">
           <button id="micBtn" class="mic-btn hidden" title="Talk">🎙️</button>
           <button id="hangupBtn" class="hangup-btn">Hang Up</button>
@@ -62,18 +58,10 @@
 
     statusEl = callPopup.querySelector("#callStatusText");
     dialogEl = callPopup.querySelector("#callDialog");
-    manualInput = callPopup.querySelector("#callTextInput");
-    sendBtn = callPopup.querySelector("#callSendBtn");
     hangupBtn = callPopup.querySelector("#hangupBtn");
     micBtn = callPopup.querySelector("#micBtn");
 
     hangupBtn.addEventListener("click", endCall);
-    sendBtn?.addEventListener("click", () => {
-      const text = manualInput?.value.trim();
-      if (!text || isProcessing) return;
-      manualInput.value = "";
-      handleUserUtterance(text);
-    });
     micBtn?.addEventListener("click", toggleMic);
 
     startRinging();
@@ -101,13 +89,11 @@
       } catch (err) {
         console.warn("❌ Mic access denied:", err);
         micAuthorized = false;
-        const manualEntry = callPopup?.querySelector(".call-manual-entry");
-        if (manualEntry) manualEntry.classList.remove("hidden");
+        statusEl.textContent = "Mic access denied. Please allow microphone access to use voice calls.";
       }
     } else if (!supportsSpeech) {
       console.warn("❌ Speech recognition not supported in this browser");
-      const manualEntry = callPopup?.querySelector(".call-manual-entry");
-      if (manualEntry) manualEntry.classList.remove("hidden");
+      statusEl.textContent = "Voice calls require a browser with speech recognition support (Chrome recommended).";
     }
 
     sendUtterance("", { initial: true });
@@ -129,8 +115,9 @@
     recognition.interimResults = false;
 
     recognition.onstart = () => {
+      console.log("🎤 Speech recognition started - SPEAK NOW");
       micBtn?.classList.add("recording");
-      statusEl.textContent = "Listening…";
+      statusEl.textContent = "🎤 Listening… Speak now!";
     };
 
     recognition.onerror = e => {
@@ -140,7 +127,7 @@
       // Don't auto-restart on error
       const errorMessages = {
         'not-allowed': "Mic access denied. Please allow microphone in browser settings.",
-        'no-speech': "No speech detected. Click mic to try again.",
+        'no-speech': "No speech detected. Try speaking louder or click mic again.",
         'audio-capture': "Mic not found. Check your microphone connection.",
         'network': "Network error. Check your connection.",
         'aborted': "Recognition stopped.",
@@ -148,25 +135,27 @@
       };
 
       statusEl.textContent = errorMessages[e.error] || `Mic error (${e.error}). Click mic to try again.`;
-
-      // Show text input as fallback on persistent errors
-      if (e.error === 'not-allowed' || e.error === 'audio-capture' || e.error === 'service-not-allowed') {
-        const manualEntry = callPopup?.querySelector(".call-manual-entry");
-        if (manualEntry) manualEntry.classList.remove("hidden");
-      }
     };
 
     recognition.onresult = e => {
+      console.log("🎤 Speech recognition result:", e.results);
       const transcript = e.results?.[0]?.[0]?.transcript?.trim();
+      console.log("📝 Transcript:", transcript);
       if (transcript) {
         handleUserUtterance(transcript);
         statusEl.textContent = "Processing…";
+      } else {
+        console.warn("⚠️ Empty transcript received");
+        statusEl.textContent = "Didn't catch that. Click mic to try again.";
       }
     };
 
     recognition.onend = () => {
+      console.log("🛑 Speech recognition ended. Processing:", isProcessing);
       micBtn?.classList.remove("recording");
-      if (!isProcessing && statusEl.textContent === "Listening…") {
+      if (!isProcessing && statusEl.textContent === "🎤 Listening… Speak now!") {
+        statusEl.textContent = "Stopped listening. Click mic to try again.";
+      } else if (!isProcessing) {
         statusEl.textContent = "Click mic to speak";
       }
     };
@@ -176,9 +165,7 @@
     console.log("🎙️ Mic button clicked, supportsSpeech:", supportsSpeech, "micAuthorized:", micAuthorized);
 
     if (!supportsSpeech) {
-      statusEl.textContent = "Speech not supported. Use text input below.";
-      const manualEntry = callPopup?.querySelector(".call-manual-entry");
-      if (manualEntry) manualEntry.classList.remove("hidden");
+      statusEl.textContent = "Speech not supported in this browser. Please use Chrome or Edge for voice calls.";
       return;
     }
 
@@ -236,6 +223,7 @@
   }
 
   function handleUserUtterance(text) {
+    console.log("💬 User said:", text);
     appendMessage("user", text);
     conversationLog.push({ role: "user", content: text });
     sendUtterance(text);
@@ -243,9 +231,9 @@
 
   function sendUtterance(text, { initial = false } = {}) {
     if (!currentPersona.id) return;
+    console.log("📤 Sending to backend:", { text, initial, historyLength: conversationLog.length });
     isProcessing = true;
     statusEl.textContent = "Processing…";
-    disableInput(true);
 
     fetch(`/api/call/${currentPersona.id}`, {
       method: "POST",
@@ -262,16 +250,18 @@
     })
       .then(res => res.json())
       .then(data => {
+        console.log("📥 Backend response:", data);
         const reply = data.reply || "Let's keep talking.";
+        console.log("🤖 Assistant replied:", reply);
         appendMessage("assistant", reply);
         conversationLog.push({ role: "assistant", content: reply });
+        console.log("📊 Updated history length:", conversationLog.length);
         if (data.audio) playReplyAudio(data.audio);
       })
       .catch(err => {
-        console.error("Call error:", err);
+        console.error("❌ Call error:", err);
       })
       .finally(() => {
-        disableInput(false);
         isProcessing = false;
       });
   }
@@ -306,11 +296,6 @@
     div.innerHTML = `<div class="call-avatar">${role === "assistant" ? "🤖" : "🧑"}</div><div class="call-bubble">${escapeHtml(text)}</div>`;
     dialogEl.appendChild(div);
     dialogEl.scrollTop = dialogEl.scrollHeight;
-  }
-
-  function disableInput(d) {
-    if (sendBtn) sendBtn.disabled = d;
-    if (manualInput) manualInput.disabled = d;
   }
 
   function stopAudio(a) {

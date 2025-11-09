@@ -645,6 +645,7 @@ def generate():
         if not genai or not GEMINI_API_KEY:
             fallback, message = build_fallback_personas(text, num_reviews, selected_characteristics)
             session["personas"] = fallback
+            session["original_prompt"] = text  # Store the original product idea
             session.modified = True
             return (
                 jsonify(
@@ -729,6 +730,7 @@ def generate():
         if not reviews:
             fallback, message = build_fallback_personas(text, num_reviews, selected_characteristics)
             session["personas"] = fallback
+            session["original_prompt"] = text  # Store the original product idea
             session.modified = True
             print(f"🔍 [generate] No reviews generated, using fallback personas")
             return (
@@ -747,6 +749,7 @@ def generate():
         
         # Store generated personas in session for chat feature
         session["personas"] = reviews
+        session["original_prompt"] = text  # Store the original product idea
         session.modified = True
 
         # Generate summary (Glows and Grows) from all reviews
@@ -779,6 +782,7 @@ def generate():
         characteristics = data.get("characteristics", []) if "data" in locals() else []
         fallback, message = build_fallback_personas(text, num_reviews, characteristics)
         session["personas"] = fallback
+        session["original_prompt"] = text  # Store the original product idea
         session.modified = True
         return (
             jsonify(
@@ -913,30 +917,30 @@ def _resolve_voice_id(gender_hint):
     return VOICE_DEFAULT or VOICE_MALE or VOICE_FEMALE or VOICE_NONBINARY
 
 
-def _build_system_prompt(persona_name, persona_descriptor, review_summary, persona_tone):
+def _build_system_prompt(persona_name, persona_descriptor, review_summary, persona_tone, original_prompt=None, characteristics=None):
     """Build the system prompt for voice call conversation."""
     descriptor_line = persona_descriptor or persona_tone or "insightful customer persona"
     review_snippet = review_summary.strip() or "No previous review context provided."
+
+    # Build characteristics description
+    characteristics_text = ""
+    if characteristics and isinstance(characteristics, list) and len(characteristics) > 0:
+        traits = ", ".join(characteristics)
+        characteristics_text = f"\nYour personality traits: {traits}. "
+
+    # Build original prompt context
+    prompt_context = ""
+    if original_prompt:
+        prompt_snippet = original_prompt[:200] + ("..." if len(original_prompt) > 200 else "")
+        prompt_context = f"\n\nThe product idea being discussed:\n\"{prompt_snippet}\"\n"
+
     return (
         f"You are {persona_name}, an {descriptor_line}. "
+        f"{characteristics_text}"
         f"Stay in character, respond conversationally, and keep answers concise but opinionated. "
         f"Reference this earlier feedback when useful:\n\"{review_snippet}\""
+        f"{prompt_context}"
     )
-
-
-def _format_history(history):
-    """Format conversation history for the prompt."""
-    lines = []
-    for turn in history[-CALL_HISTORY_LIMIT:]:
-        role = turn.get("role", "")
-        content = turn.get("content", "")
-        if not content:
-            continue
-        if role == "assistant":
-            lines.append(f"Persona: {content}")
-        else:
-            lines.append(f"User: {content}")
-    return "\n".join(lines)
 
 
 @app.route("/api/call/<int:persona_id>", methods=["POST"])
@@ -966,30 +970,86 @@ def call_persona(persona_id):
         persona_name = persona_name or metadata.get("persona_name") or f"Persona {persona_id}"
         persona_descriptor = metadata.get("persona_descriptor") or metadata.get("personality_description", "")
         review_summary = persona.get("review", "") if persona else ""
+        characteristics = metadata.get("characteristics", [])
+
+        # Get original product idea from session
+        original_prompt = session.get("original_prompt", "")
 
         history_key = f"call_history_{persona_id}"
         history = session.get(history_key, [])
         if isinstance(payload.get("history"), list):
             history = payload["history"][-CALL_HISTORY_LIMIT:]
 
-        system_prompt = _build_system_prompt(persona_name, persona_descriptor, review_summary, persona_tone)
-        conversation_transcript = _format_history(history)
-
-        prompt = (
-            f"{system_prompt}\n\n"
-            f"Conversation so far:\n{conversation_transcript}\n\n"
-            f"User: {user_text or 'Start conversation'}\n"
-            f"{persona_name}:"
+        system_prompt = _build_system_prompt(
+            persona_name,
+            persona_descriptor,
+            review_summary,
+            persona_tone,
+            original_prompt=original_prompt,
+            characteristics=characteristics
         )
+
+        # Debug logging
+        print(f"\n🎙️ Call to persona {persona_id} ({persona_name})")
+        print(f"   📝 Original prompt: {original_prompt[:100] if original_prompt else 'None'}...")
+        print(f"   🎭 Characteristics: {characteristics}")
+        print(f"   💬 History length: {len(history)} messages")
+        if history:
+            print(f"   📜 History preview:")
+            for i, turn in enumerate(history[-3:]):  # Show last 3 turns
+                role = turn.get('role', '?')
+                content = turn.get('content', '')[:50]
+                print(f"      [{i}] {role}: {content}...")
+        print(f"   👤 User message: '{user_text}'")
+        print(f"   🎬 Initial greeting: {initial_greeting}")
 
         reply_text = ""
 
-        # Try Gemini first
+        # For initial greeting, generate a proper greeting response
+        # For subsequent messages, respond to user input
+        if initial_greeting:
+            current_message = "Greet the user briefly and ask how you can help them with the product idea."
+        elif user_text:
+            current_message = user_text
+        else:
+            # If no user text, something went wrong with speech recognition
+            current_message = "The user is having trouble speaking. Ask them to try again or encourage them to share their thoughts."
+
+        print(f"   📤 Sending to AI: '{current_message[:100]}'")
+
+        # Try Gemini first - use chat API for better context handling
         if genai and GEMINI_API_KEY:
             try:
-                model = genai.GenerativeModel("gemini-2.0-flash-exp")
-                response = model.generate_content(prompt)
+                model = genai.GenerativeModel(
+                    "gemini-2.0-flash-lite",  # Using 1.5-flash for higher quota (1500 requests/day vs 50)
+                    system_instruction=system_prompt
+                )
+
+                # Build chat history in Gemini's format
+                chat_history = []
+                for turn in history[-CALL_HISTORY_LIMIT:]:
+                    role = turn.get("role", "")
+                    content = turn.get("content", "")
+                    if not content:
+                        continue
+                    # Map roles: assistant -> model, user -> user
+                    gemini_role = "model" if role == "assistant" else "user"
+                    chat_history.append({
+                        "role": gemini_role,
+                        "parts": [content]
+                    })
+
+                print(f"   🔧 Chat history for Gemini: {len(chat_history)} turns")
+
+                # Start chat session with history
+                chat = model.start_chat(history=chat_history)
+
+                # Send current message
+                response = chat.send_message(current_message)
                 candidate = (response.text or "").strip()
+
+                print(f"   ✅ Gemini response: {candidate[:100]}...")
+
                 if candidate:
                     reply_text = candidate
                 else:
@@ -998,18 +1058,29 @@ def call_persona(persona_id):
                 print("⚠️ Gemini error:", exc)
                 traceback.print_exc()
 
-        # Fallback to OpenAI
+        # Fallback to OpenAI with proper conversation history
         if (not reply_text or "offline" in reply_text.lower()) and openai_client:
             try:
+                # Build OpenAI messages with system prompt and conversation history
+                oai_messages = [{"role": "system", "content": system_prompt}]
+
+                # Add conversation history
+                for turn in history[-CALL_HISTORY_LIMIT:]:
+                    role = turn.get("role", "")
+                    content = turn.get("content", "")
+                    if content and role in ["user", "assistant"]:
+                        oai_messages.append({"role": role, "content": content})
+
+                # Add current message
+                oai_messages.append({"role": "user", "content": current_message})
+
                 oai_resp = openai_client.chat.completions.create(
                     model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_text or "Start conversation"},
-                    ],
+                    messages=oai_messages,
                     max_tokens=150,
                 )
                 reply_text = oai_resp.choices[0].message.content.strip()
+                print(f"   ✅ OpenAI response: {reply_text[:100]}...")
             except Exception as e:
                 print("🔥 OpenAI fallback failed:", e)
                 reply_text = "Let's keep discussing your idea — tell me more!"
@@ -1019,21 +1090,30 @@ def call_persona(persona_id):
         if not voice_id:
             return jsonify({"error": "No ElevenLabs voice configured for this persona."}), 500
 
-        # Ensure we always have something to say
+        # Ensure we always have something to say - use context-aware fallback
         if not reply_text:
-            reply_text = "Hey, let's continue — what's your product idea?"
+            if initial_greeting:
+                reply_text = f"Hey, I'm {persona_name}. I reviewed your {original_prompt[:30] if original_prompt else 'idea'}... Let's discuss it!"
+            elif history and len(history) > 0:
+                # Try to reference the last user message
+                last_user_msg = next((turn.get('content', '') for turn in reversed(history) if turn.get('role') == 'user'), '')
+                if last_user_msg:
+                    reply_text = f"That's a great question about {last_user_msg[:50]}. Let me think... Given my {characteristics[0] if characteristics else 'analytical'} perspective, I'd say we should explore that further."
+                else:
+                    reply_text = f"I'm having connectivity issues, but based on my review of your {original_prompt[:30] if original_prompt else 'product idea'}..., what specific aspect would you like to discuss?"
+            else:
+                reply_text = f"Hey, I'm {persona_name}. Thanks for reaching out - how can I help with your product idea?"
+            print(f"   ⚠️  Using fallback reply (API quota exceeded or error)")
 
-        speech_text = (
-            f"Hey, I'm {persona_name}. I gave feedback on your project earlier — how may I help you today?"
-            if initial_greeting
-            else reply_text
-        )
+        print(f"   💬 Final reply: {reply_text[:100]}...")
 
-        speech_prompt = f"Speak in a {persona_tone} tone: {speech_text}"
+        # Use the AI-generated reply as the speech text (it's already contextual and personalized)
+        speech_text = reply_text
 
+        # Send just the text to speak (no tone instruction - that's metadata, not spoken text)
         speech_result = elevenlabs_client.text_to_speech.convert(
             voice_id=voice_id,
-            text=speech_prompt,
+            text=speech_text,
             model_id="eleven_multilingual_v2",
         )
 
