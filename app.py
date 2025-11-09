@@ -6,11 +6,22 @@ import os
 import re
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from werkzeug.utils import secure_filename
 
 try:
     import google.generativeai as genai  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - optional dependency
     genai = None  # type: ignore[assignment]
+
+try:
+    import pdfplumber  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - optional dependency
+    pdfplumber = None  # type: ignore[assignment]
+
+try:
+    from docx import Document  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - optional dependency
+    Document = None  # type: ignore[assignment]
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,6 +53,71 @@ AVAILABLE_CHARACTERISTICS = [
     "adventurous",
 ]
 
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {"pdf", "doc", "docx"}
+
+
+def allowed_file(filename):
+    """Check if file extension is allowed."""
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def extract_text_from_pdf(file):
+    """Extract text from a PDF file."""
+    if not pdfplumber:
+        return None, "PDF parsing library (pdfplumber) not installed"
+    try:
+        # Reset file pointer to beginning
+        file.seek(0)
+        text_content = []
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    text_content.append(text)
+        return "\n\n".join(text_content), None
+    except Exception as exc:
+        return None, f"Error parsing PDF: {str(exc)}"
+
+
+def extract_text_from_docx(file):
+    """Extract text from a DOCX file."""
+    if not Document:
+        return None, "DOCX parsing library (python-docx) not installed"
+    try:
+        # Reset file pointer to beginning
+        file.seek(0)
+        doc = Document(file)
+        text_content = []
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text_content.append(paragraph.text)
+        return "\n\n".join(text_content), None
+    except Exception as exc:
+        return None, f"Error parsing DOCX: {str(exc)}"
+
+
+def parse_uploaded_file(file):
+    """Parse uploaded file and return extracted text."""
+    if not file or not file.filename:
+        return None, None
+
+    if not allowed_file(file.filename):
+        return None, "File type not allowed. Please upload PDF, DOC, or DOCX files."
+
+    filename = secure_filename(file.filename)
+    extension = filename.rsplit(".", 1)[1].lower()
+
+    try:
+        if extension == "pdf":
+            return extract_text_from_pdf(file)
+        elif extension in ["doc", "docx"]:
+            return extract_text_from_docx(file)
+        else:
+            return None, f"Unsupported file type: {extension}"
+    except Exception as exc:
+        return None, f"Error processing file: {str(exc)}"
+
 
 @app.route("/")
 def index():
@@ -57,6 +133,7 @@ def generate_review(  # pylint: disable=too-many-arguments
     age_max=None,
     gender=None,
     location=None,
+    document_text=None,
 ):
     """Generate a single review using the Gemini API."""
     if not genai or not GEMINI_API_KEY:
@@ -94,11 +171,21 @@ def generate_review(  # pylint: disable=too-many-arguments
     if context_parts:
         reviewer_context += f", {', '.join(context_parts)}"
 
+    # Build the prompt with optional document context
+    document_context = ""
+    if document_text and document_text.strip():
+        # Truncate document text if too long (keep first 3000 chars to avoid token limits)
+        truncated_doc = document_text[:3000] + "..." if len(document_text) > 3000 else document_text
+        document_context = f"""
+
+Additional context from attached document:
+{truncated_doc}
+"""
 
     gemini_prompt = f"""
 You are a potential customer responding to a product idea.
 The product concept is: {prompt}
-
+{document_context}
 You are {reviewer_context}.
 
 Provide 2-4 sentences of authentic feedback. Afterwards, on a new line,
@@ -144,18 +231,41 @@ add a rating between 1 and 10 formatted exactly as: RATING: X
 def generate():
     """Handle frontend POST to generate multiple feedbacks."""
     try:
-        data = request.get_json(silent=True) or {}
-        print("\n✅ Received data from frontend:", data)
+        # Check if request contains files (multipart/form-data) or JSON
+        if request.files:
+            # Handle multipart/form-data with file upload
+            text = (request.form.get("text") or "").strip()
+            num_reviews = max(1, min(20, int(request.form.get("numReviews", 5))))
+            selected_characteristics = request.form.getlist("characteristics") or []
+            age_min = request.form.get("ageMin")
+            age_max = request.form.get("ageMax")
+            gender = request.form.get("gender")
+            location = request.form.get("location")
+            
+            # Parse uploaded file if present
+            document_text = None
+            if "ideaFile" in request.files:
+                file = request.files["ideaFile"]
+                if file and file.filename:
+                    parsed_text, error = parse_uploaded_file(file)
+                    if error:
+                        print(f"⚠️ File parsing error: {error}")
+                    elif parsed_text:
+                        document_text = parsed_text
+                        print(f"✅ Successfully extracted {len(parsed_text)} characters from document")
+        else:
+            # Handle JSON request (backward compatibility)
+            data = request.get_json(silent=True) or {}
+            print("\n✅ Received data from frontend:", data)
 
-        text = (data.get("text") or "").strip()
-        num_reviews = max(1, min(20, int(data.get("numReviews", 5))))
-
-
-        selected_characteristics = data.get("characteristics", [])
-        age_min = data.get("ageMin")
-        age_max = data.get("ageMax")
-        gender = data.get("gender")
-        location = data.get("location")
+            text = (data.get("text") or "").strip()
+            num_reviews = max(1, min(20, int(data.get("numReviews", 5))))
+            selected_characteristics = data.get("characteristics", [])
+            age_min = data.get("ageMin")
+            age_max = data.get("ageMax")
+            gender = data.get("gender")
+            location = data.get("location")
+            document_text = None
 
         if not text:
             return jsonify({"error": "Please enter a product idea!"}), 400
@@ -192,6 +302,7 @@ def generate():
                     "age_max": age_max,
                     "gender": gender,
                     "location": location,
+                    "document_text": document_text,
                 }
             )
 
@@ -208,6 +319,7 @@ def generate():
                     t["age_max"],
                     t["gender"],
                     t["location"],
+                    t.get("document_text"),
                 ): t
                 for t in tasks
             }

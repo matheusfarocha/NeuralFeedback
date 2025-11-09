@@ -26,6 +26,22 @@
     const ageMaxValue = document.getElementById("ageMaxValue");
     const generateButton = document.getElementById("generateButton");
     const closeButton = document.getElementById("feedbackCloseButton");
+    const ideaFileInput = document.getElementById("ideaFile");
+    const attachmentDisplay = document.getElementById("attachmentDisplay");
+    const attachmentName = document.getElementById("attachmentName");
+
+    // Handle file selection
+    if (ideaFileInput && attachmentDisplay && attachmentName) {
+      ideaFileInput.addEventListener("change", (event) => {
+        const file = event.target.files[0];
+        if (file) {
+          attachmentName.textContent = file.name;
+          attachmentDisplay.classList.remove("hidden");
+        } else {
+          attachmentDisplay.classList.add("hidden");
+        }
+      });
+    }
 
     if (reviewCountSlider && reviewCountValue) {
       reviewCountValue.textContent = reviewCountSlider.value;
@@ -197,6 +213,7 @@
     const location = document.getElementById("location")?.value.trim() || "";
     const generateButton = document.getElementById("generateButton");
     const characteristics = Array.from(selectedCharacteristics);
+    const ideaFileInput = document.getElementById("ideaFile");
 
     if (!text) {
       showError("Please enter a product idea first!");
@@ -205,10 +222,6 @@
     if (!characteristics.length) {
       showError("Please select at least one characteristic for your personas!");
       return;
-
-
-
-
     }
 
     clearError();
@@ -218,12 +231,38 @@
     }
 
     try {
-      const res = await fetch("/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ text, numReviews, ageMin, ageMax, gender, location, characteristics }),
-      });
+      // Check if a file is attached
+      const file = ideaFileInput?.files[0];
+      
+      let res;
+      if (file) {
+        // Use FormData if file is attached
+        const formData = new FormData();
+        formData.append("text", text);
+        formData.append("numReviews", numReviews.toString());
+        formData.append("ageMin", ageMin.toString());
+        formData.append("ageMax", ageMax.toString());
+        formData.append("gender", gender);
+        formData.append("location", location);
+        characteristics.forEach(char => {
+          formData.append("characteristics", char);
+        });
+        formData.append("ideaFile", file);
+
+        res = await fetch("/generate", {
+          method: "POST",
+          credentials: "same-origin",
+          body: formData,
+        });
+      } else {
+        // Use JSON if no file (backward compatibility)
+        res = await fetch("/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ text, numReviews, ageMin, ageMax, gender, location, characteristics }),
+        });
+      }
 
       const data = await res.json();
       if (!res.ok) {
@@ -520,4 +559,14 @@
   };
   window.hideOverlay = hideOverlay;
   window.startCall = startCall;
+  window.removeAttachment = () => {
+    const ideaFileInput = document.getElementById("ideaFile");
+    const attachmentDisplay = document.getElementById("attachmentDisplay");
+    if (ideaFileInput) {
+      ideaFileInput.value = "";
+    }
+    if (attachmentDisplay) {
+      attachmentDisplay.classList.add("hidden");
+    }
+  };
 })();
