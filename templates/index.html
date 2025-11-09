@@ -95,7 +95,7 @@
         </select>
       </div>
 
-      <button id="generateButton" class="btn-generate" onclick="handleSubmit()">
+      <button id="generateButton" class="btn-generate">
         Generate AI Client Responses
       </button>
     </section>
@@ -112,14 +112,11 @@
 
       <div id="feedbackCards" class="feedback-grid"></div>
 
-      <div class="feedback-actions">
-        <button id="feedbackRestartButton" class="neon-btn">
-          Start New Session
-        </button>
-      </div>
-    </div>
-  </section>
+      <div id="feedbackSummarySection" class="feedback-summary-section hidden"></div>
 
-  <script src="{{ url_for('static', filename='scripts.js') }}"></script>
-</body>
-</html>
+    </section>
+  
+    <script src="{{ url_for('static', filename='scripts.js') }}"></script>
+  </body>
+  </html>
+  
