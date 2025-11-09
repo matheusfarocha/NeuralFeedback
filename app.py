@@ -7,42 +7,49 @@ from dotenv import load_dotenv
 import os
 
 # Utility imports for processing and error handling
+import json
 import math
 import random
 import re
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from werkzeug.utils import secure_filename
 
-# Attempt to import Google Gemini AI library (optional dependency)
 try:
     import google.generativeai as genai  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - optional dependency
     genai = None  # type: ignore[assignment]
 
-# ============================================================
-# CONFIGURATION AND INITIALIZATION
-# ============================================================
-# Load environment variables from .env file (API keys, secrets)
+try:
+    import pdfplumber  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - optional dependency
+    pdfplumber = None  # type: ignore[assignment]
+
+try:
+    from docx import Document  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - optional dependency
+    Document = None  # type: ignore[assignment]
+
+# Load environment variables from .env file
 load_dotenv()
 
-# Initialize Flask application
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret")
 
 # Load Gemini API key from environment variables
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Configure Gemini API if both the library and API key are available
+# Configure Gemini API when available
 if genai and GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# ============================================================
-# CONSTANTS
-# ============================================================
-# Intensity multipliers for persona characteristics (somewhat, moderately, very)
+print(f"genai loaded: {genai is not None}")
+print(f"GEMINI_API_KEY present: {bool(GEMINI_API_KEY)}")
+
+# Intensity levels
 INTENSITY_LEVELS = [0.9, 1.0, 1.1]
 
-# Personality traits available for generating diverse customer personas
+# Available persona traits
 AVAILABLE_CHARACTERISTICS = [
     "analytical",
     "creative",
@@ -55,6 +62,86 @@ AVAILABLE_CHARACTERISTICS = [
     "cautious",
     "adventurous",
 ]
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {"pdf", "doc", "docx"}
+
+
+def allowed_file(filename):
+    """Check if file extension is allowed."""
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def parse_int(value):
+    """Safely parse integers from form inputs."""
+    try:
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        value = str(value).strip()
+        if not value:
+            return None
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def extract_text_from_pdf(file):
+    """Extract text from a PDF file."""
+    if not pdfplumber:
+        return None, "PDF parsing library (pdfplumber) not installed"
+    try:
+        # Reset file pointer to beginning
+        file.seek(0)
+        text_content = []
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    text_content.append(text)
+        return "\n\n".join(text_content), None
+    except Exception as exc:
+        return None, f"Error parsing PDF: {str(exc)}"
+
+
+def extract_text_from_docx(file):
+    """Extract text from a DOCX file."""
+    if not Document:
+        return None, "DOCX parsing library (python-docx) not installed"
+    try:
+        # Reset file pointer to beginning
+        file.seek(0)
+        doc = Document(file)
+        text_content = []
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text_content.append(paragraph.text)
+        return "\n\n".join(text_content), None
+    except Exception as exc:
+        return None, f"Error parsing DOCX: {str(exc)}"
+
+
+def parse_uploaded_file(file):
+    """Parse uploaded file and return extracted text."""
+    if not file or not file.filename:
+        return None, None
+
+    if not allowed_file(file.filename):
+        return None, "File type not allowed. Please upload PDF, DOC, or DOCX files."
+
+    filename = secure_filename(file.filename)
+    extension = filename.rsplit(".", 1)[1].lower()
+
+    try:
+        if extension == "pdf":
+            return extract_text_from_pdf(file)
+        elif extension in ["doc", "docx"]:
+            return extract_text_from_docx(file)
+        else:
+            return None, f"Unsupported file type: {extension}"
+    except Exception as exc:
+        return None, f"Error processing file: {str(exc)}"
 
 # Random name pools for persona generation
 FIRST_NAMES = [
@@ -80,13 +167,9 @@ LAST_NAMES = [
 
 @app.route("/")
 def index():
-    """Render the main landing page with available persona characteristics"""
+    """Render main page"""
     return render_template("index.html", characteristics=AVAILABLE_CHARACTERISTICS)
 
-
-# ============================================================
-# CORE HELPER FUNCTIONS
-# ============================================================
 
 def generate_review(  # pylint: disable=too-many-arguments
     prompt,
@@ -96,110 +179,359 @@ def generate_review(  # pylint: disable=too-many-arguments
     age_max=None,
     gender=None,
     location=None,
+    document_text=None,
 ):
-    """
-    Generate a single persona review using the Gemini API.
-
-    Takes a product idea and persona parameters, returns AI-generated feedback
-    with a sentiment rating (1-10) from that persona's perspective.
-    """
-    # Validate that Gemini API is available and configured
+    """Generate a single review using the Gemini API."""
     if not genai or not GEMINI_API_KEY:
         return None, "Gemini API key not configured"
     if not selected_characteristics:
         return None, "No characteristics selected"
 
-    # Map intensity levels to human-readable labels
     intensity_labels = {0.9: "somewhat", 1.0: "moderately", 1.1: "very"}
-    personality_parts = []
-
-    # Build personality description from selected characteristics and their intensities
+    trait_descriptions = []
     for char in selected_characteristics:
         intensity_value = characteristic_intensities.get(char, 1.0)
-        personality_parts.append(f"{intensity_labels.get(intensity_value, 'moderately')} {char}")
+        trait_descriptions.append(f"{intensity_labels.get(intensity_value, 'moderately')} {char}")
 
-    # Format personality traits into grammatically correct string
-    if len(personality_parts) > 1:
-        personality = ", ".join(personality_parts[:-1]) + f", and {personality_parts[-1]}"
-    else:
-        personality = personality_parts[0]
+    personality_summary = ", ".join(trait_descriptions)
 
-    # Build demographic context parts (age, gender, location)
-    context_parts = []
-    generated_age = None
+    age_min_val = parse_int(age_min)
+    age_max_val = parse_int(age_max)
 
-    if age_min and age_max:
-        generated_age = random.randint(age_min, age_max)
-        context_parts.append(f"age {generated_age}")
-    elif age_min:
-        generated_age = age_min
-        context_parts.append(f"age {age_min}+")
-    elif age_max:
-        generated_age = age_max
-        context_parts.append(f"age up to {age_max}")
+    persona_constraints = []
+    if age_min_val is not None and age_max_val is not None:
+        if age_min_val > age_max_val:
+            age_min_val, age_max_val = age_max_val, age_min_val
+        persona_constraints.append(f"Age between {age_min_val} and {age_max_val}")
+    elif age_min_val is not None:
+        persona_constraints.append(f"Age {age_min_val} or older")
+    elif age_max_val is not None:
+        persona_constraints.append(f"Age {age_max_val} or younger")
+
     if gender:
-        context_parts.append(f"gender {gender}")
+        persona_constraints.append(f"Gender: {gender}")
     if location:
-        context_parts.append(f"from {location}")
+        persona_constraints.append(f"Based in {location}")
 
-    # Combine personality and demographics into complete reviewer context
-    reviewer_context = f"a potential customer who is {personality}"
-    if context_parts:
-        reviewer_context += f", {', '.join(context_parts)}"
+    constraints_text = "\n".join(f"- {item}" for item in persona_constraints) if persona_constraints else "- No specific demographic constraints provided."
+    traits_text = "\n".join(f"- {desc}" for desc in trait_descriptions)
 
-    # Construct the prompt for Gemini AI to generate persona-specific feedback
-    gemini_prompt = f"""
-You are a potential customer responding to a product idea.
-The product concept is: {prompt}
+    document_context = ""
+    if document_text and document_text.strip():
+        truncated_doc = document_text[:3000] + "..." if len(document_text) > 3000 else document_text
+        document_context = f"""
 
-You are {reviewer_context}.
-
-Provide 2-4 sentences of authentic feedback. Afterwards, on a new line,
-add a rating between 1 and 10 formatted exactly as: RATING: X
+Supporting material supplied by the user:
+\"\"\"{truncated_doc}\"\"\"
 """
 
-    try:
-        # Call Gemini API to generate the review
-        model = genai.GenerativeModel("gemini-2.0-flash-lite")
-        response = model.generate_content(gemini_prompt)
-        full_text = (response.text or "").strip()
+    instruction_schema = """
+Return ONLY valid JSON (no code fences) with this structure:
+{
+  "persona": {
+    "name": "First Last",
+    "age": integer,
+    "gender": "Gender or leave empty",
+    "location": "City, Region or leave empty",
+    "profession": "Job title",
+    "tone": "One-word tone describing how they speak",
+    "descriptor": "Short sentence describing the persona",
+    "traits": ["list", "of", "traits"],
+    "motivations": "Optional short phrase about what drives them"
+  },
+  "review": {
+    "text": "2-4 sentences of authentic feedback grounded in the product idea and persona perspective.",
+    "rating": integer between 1 and 10,
+    "summary": "Optional one sentence TL;DR of the feedback"
+  }
+}
+"""
 
-        # Extract rating from the response using regex
-        rating_match = re.search(r"RATING:\s*(\d+)", full_text, re.IGNORECASE)
+    gemini_prompt = f"""
+You are crafting a realistic customer persona and their feedback about a product concept.
 
-        # Parse and validate rating (default to 5, clamp between 1-10)
+Product Concept:
+\"\"\"{prompt}\"\"\"
+
+Primary persona traits to embody:
+{traits_text}
+
+Persona constraints and user-supplied demographic preferences:
+{constraints_text}
+{document_context}
+
+Use every piece of provided information. The review must reference specifics from the product concept and any supporting document snippets when available.
+
+{instruction_schema}
+Fill in missing demographic fields with plausible details that still align with the constraints and traits. Keep the JSON concise, valid, and free of additional commentary.
+"""
+
+    def build_metadata_from_text(raw_text):
+        """Fallback parser when JSON output is unavailable."""
+        rating_match = re.search(r"RATING:\s*(\d+)", raw_text, re.IGNORECASE)
         rating = int(rating_match.group(1)) if rating_match else 5
         rating = max(1, min(10, rating))
-
-        # Remove the rating line from review text to get clean feedback
-        review_text = re.sub(r"\s*RATING:\s*\d+\s*$", "", full_text, flags=re.IGNORECASE).strip()
+        review_text = re.sub(r"\s*RATING:\s*\d+\s*$", "", raw_text, flags=re.IGNORECASE).strip()
         if not review_text:
             review_text = "No feedback received."
 
-        # Generate random name for persona
         first_name = random.choice(FIRST_NAMES)
         last_name = random.choice(LAST_NAMES)
         persona_name = f"{first_name} {last_name}"
+        descriptor = f"{personality_summary} customer persona".strip().capitalize()
 
         # Package review with metadata about the persona
         metadata = {
             "persona_name": persona_name,
-            "persona_descriptor": reviewer_context,
+            "persona_descriptor": descriptor,
             "characteristics": selected_characteristics,
             "characteristic_intensities": characteristic_intensities,
             "sentiment_rating": rating,
-            "personality_description": personality,
-            "age_range": f"{age_min}-{age_max}" if age_min and age_max else None,
-            "age": generated_age,
+            "personality_description": descriptor,
+            "age_range": f"{age_min_val}-{age_max_val}" if age_min_val is not None and age_max_val is not None else None,
+            "age": None,
             "gender": gender or None,
             "location": location or None,
+            "tone": None,
+            "profession": None,
+            "traits_summary": personality_summary,
+            "source_documents_used": bool(document_text and document_text.strip()),
         }
+        return review_text, metadata
+
+    try:
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        response = model.generate_content(gemini_prompt)
+        raw_output = (response.text or "").strip()
+
+        cleaned_output = raw_output
+        if cleaned_output.startswith("```"):
+            cleaned_output = re.sub(r"^```(?:json)?", "", cleaned_output, flags=re.IGNORECASE).strip()
+            cleaned_output = re.sub(r"```$", "", cleaned_output).strip()
+
+        parsed = None
+        if cleaned_output:
+            try:
+                parsed = json.loads(cleaned_output)
+            except json.JSONDecodeError:
+                print("⚠️ Gemini returned non-JSON response; falling back to text parser.")
+
+        if not parsed or not isinstance(parsed, dict):
+            review_text, metadata = build_metadata_from_text(raw_output)
+            return {"text": review_text, "metadata": metadata}, None
+
+        persona_info = parsed.get("persona", {}) or {}
+        review_info = parsed.get("review", {}) or {}
+
+        review_text = (review_info.get("text") or "").strip()
+        if not review_text:
+            review_text, metadata = build_metadata_from_text(raw_output)
+            return {"text": review_text, "metadata": metadata}, None
+
+        rating_value = parse_int(review_info.get("rating"))
+        if rating_value is None:
+            rating_value = 5
+        rating_value = max(1, min(10, rating_value))
+
+        persona_name = (persona_info.get("name") or "").strip()
+        if not persona_name:
+            persona_name = f"{random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
+
+        persona_age = parse_int(persona_info.get("age"))
+        persona_gender = (persona_info.get("gender") or gender or "").strip() or None
+        persona_location = (persona_info.get("location") or location or "").strip() or None
+        persona_profession = (persona_info.get("profession") or "").strip() or None
+        persona_tone = (persona_info.get("tone") or "").strip() or None
+        persona_descriptor = (persona_info.get("descriptor") or persona_info.get("summary") or "").strip()
+        if not persona_descriptor:
+            persona_descriptor = f"{personality_summary} customer persona".capitalize()
+
+        persona_traits = persona_info.get("traits")
+        if not isinstance(persona_traits, list) or not persona_traits:
+            persona_traits = selected_characteristics
+
+        metadata = {
+            "persona_name": persona_name,
+            "persona_descriptor": persona_descriptor,
+            "characteristics": persona_traits,
+            "characteristic_intensities": characteristic_intensities,
+            "sentiment_rating": rating_value,
+            "personality_description": persona_descriptor,
+            "age_range": f"{age_min_val}-{age_max_val}" if age_min_val is not None and age_max_val is not None else None,
+            "age": persona_age,
+            "gender": persona_gender,
+            "location": persona_location,
+            "profession": persona_profession,
+            "tone": persona_tone,
+            "motivations": persona_info.get("motivations"),
+            "traits_summary": personality_summary,
+            "source_documents_used": bool(document_text and document_text.strip()),
+        }
+        review_summary = (review_info.get("summary") or "").strip()
+        if review_summary:
+            metadata["review_summary"] = review_summary
 
         return {"text": review_text, "metadata": metadata}, None
     except Exception as exc:  # pragma: no cover - network failure
         print("🔥 Error generating review:", exc)
         traceback.print_exc()
         return None, f"Gemini error: {exc}"
+
+
+def generate_feedback_summary(reviews):
+    """Generate Glows and Grows summary from all persona feedbacks using Gemini API."""
+    print(f"🔍 [generate_feedback_summary] Called with {len(reviews)} reviews")
+    print(f"🔍 [generate_feedback_summary] genai available: {genai is not None}")
+    print(f"🔍 [generate_feedback_summary] GEMINI_API_KEY available: {GEMINI_API_KEY is not None}")
+    
+    if not genai or not GEMINI_API_KEY:
+        print("🔍 [generate_feedback_summary] Early return: genai or API key missing")
+        return [], []
+    if not reviews or len(reviews) == 0:
+        print("🔍 [generate_feedback_summary] Early return: no reviews")
+        return [], []
+    
+    print(f"🔍 [generate_feedback_summary] Proceeding with summary generation...")
+
+    # Format reviews as "1: feedback text, 2: feedback text" etc.
+    formatted_feedbacks = []
+    for review in reviews:
+        review_text = review.get("review", "").strip()
+        if not review_text:
+            continue
+
+        review_id = review.get("id", len(formatted_feedbacks) + 1)
+        metadata = review.get("metadata", {}) or {}
+        persona_name = metadata.get("persona_name")
+        profession = metadata.get("profession")
+        tone = metadata.get("tone")
+        location = metadata.get("location")
+        traits = metadata.get("characteristics") or []
+
+        persona_context_parts = []
+        if persona_name:
+            persona_context_parts.append(persona_name)
+        if profession:
+            persona_context_parts.append(profession)
+        if tone:
+            persona_context_parts.append(f"tone: {tone}")
+        if location:
+            persona_context_parts.append(location)
+        if traits:
+            persona_context_parts.append("traits: " + ", ".join(traits[:5]))
+
+        persona_context = " | ".join(persona_context_parts)
+        if persona_context:
+            formatted_feedbacks.append(f"{review_id}: ({persona_context}) {review_text}")
+        else:
+            formatted_feedbacks.append(f"{review_id}: {review_text}")
+
+    if not formatted_feedbacks:
+        return [], []
+
+    feedback_text = ", ".join(formatted_feedbacks)
+
+    # Truncate if too long (keep first 8000 chars to avoid token limits)
+    if len(feedback_text) > 8000:
+        feedback_text = feedback_text[:8000] + "..."
+
+    gemini_prompt = f"""
+You are analyzing multiple customer feedback responses about a product idea. Below are the numbered feedbacks:
+
+{feedback_text}
+
+Analyze all these feedbacks and summarize them into two categories:
+
+1. **Glows**: What aspects of the product idea are generally positive, well-received, or show promise? List 3-5 key strengths.
+
+2. **Grows**: What areas need improvement, what concerns were raised, or what aspects were criticized? List 3-5 key areas for improvement.
+
+Format your response EXACTLY as follows (use these exact section headers):
+
+GLOWS:
+- [First positive point]
+- [Second positive point]
+- [Third positive point]
+- [Fourth positive point]
+- [Fifth positive point if applicable]
+
+GROWS:
+- [First area for improvement]
+- [Second area for improvement]
+- [Third area for improvement]
+- [Fourth area for improvement]
+- [Fifth area for improvement if applicable]
+
+Keep each point concise (one sentence or short phrase). Focus on the most common themes across all feedbacks.
+"""
+
+    try:
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        response = model.generate_content(gemini_prompt)
+        summary_text = (response.text or "").strip()
+
+        # Parse the response to extract Glows and Grows
+        glows = []
+        grows = []
+
+        # Split by sections
+        glows_section = re.search(r"GLOWS:\s*(.*?)(?=GROWS:|$)", summary_text, re.IGNORECASE | re.DOTALL)
+        grows_section = re.search(r"GROWS:\s*(.*?)$", summary_text, re.IGNORECASE | re.DOTALL)
+
+        if glows_section:
+            glows_text = glows_section.group(1).strip()
+            # Extract bullet points (lines starting with - or •)
+            glows = [
+                line.strip().lstrip("-•").strip()
+                for line in glows_text.split("\n")
+                if line.strip() and (line.strip().startswith("-") or line.strip().startswith("•"))
+            ]
+
+        if grows_section:
+            grows_text = grows_section.group(1).strip()
+            # Extract bullet points (lines starting with - or •)
+            grows = [
+                line.strip().lstrip("-•").strip()
+                for line in grows_text.split("\n")
+                if line.strip() and (line.strip().startswith("-") or line.strip().startswith("•"))
+            ]
+
+        # Fallback: if parsing failed, try to extract any list items
+        if not glows and not grows:
+            # Try alternative parsing
+            lines = summary_text.split("\n")
+            current_section = None
+            for line in lines:
+                line_lower = line.lower().strip()
+                if "glow" in line_lower and ":" in line:
+                    current_section = "glows"
+                elif "grow" in line_lower and ":" in line:
+                    current_section = "grows"
+                elif line.strip().startswith("-") or line.strip().startswith("•"):
+                    item = line.strip().lstrip("-•").strip()
+                    if item and current_section:
+                        if current_section == "glows":
+                            glows.append(item)
+                        elif current_section == "grows":
+                            grows.append(item)
+
+        # Ensure we have at least some content
+        if not glows:
+            glows = ["Positive aspects identified in feedback", "Strong value proposition"]
+        if not grows:
+            grows = ["Areas for improvement identified", "Consider refining the approach"]
+
+        print(f"✅ Generated summary: {len(glows)} glows, {len(grows)} grows")
+        return glows[:5], grows[:5]  # Limit to 5 items each
+
+    except Exception as exc:
+        print(f"🔥 Error generating feedback summary: {exc}")
+        traceback.print_exc()
+        # Return fallback data
+        return (
+            ["Strong value proposition", "Innovative approach", "Clear target audience"],
+            ["Consider refining user experience", "Clarify monetization strategy", "Address technical challenges"],
+        )
 
 
 @app.route("/generate", methods=["POST"])
@@ -211,29 +543,48 @@ def generate():
     generate multiple AI reviews concurrently, and stores results in session.
     """
     try:
-        # Parse incoming JSON request data from frontend
-        data = request.get_json(silent=True) or {}
-        print("\n✅ Received data from frontend:", data)
+        # Check if request contains files (multipart/form-data) or JSON
+        if request.files:
+            # Handle multipart/form-data with file upload
+            text = (request.form.get("text") or "").strip()
+            num_reviews = max(1, min(20, int(request.form.get("numReviews", 5))))
+            selected_characteristics = request.form.getlist("characteristics") or []
+            age_min = parse_int(request.form.get("ageMin"))
+            age_max = parse_int(request.form.get("ageMax"))
+            gender = (request.form.get("gender") or "").strip() or None
+            location = (request.form.get("location") or "").strip() or None
+            
+            # Parse uploaded file if present
+            document_text = None
+            if "ideaFile" in request.files:
+                file = request.files["ideaFile"]
+                if file and file.filename:
+                    parsed_text, error = parse_uploaded_file(file)
+                    if error:
+                        print(f"⚠️ File parsing error: {error}")
+                    elif parsed_text:
+                        document_text = parsed_text
+                        print(f"✅ Successfully extracted {len(parsed_text)} characters from document")
+        else:
+            # Handle JSON request (backward compatibility)
+            data = request.get_json(silent=True) or {}
+            print("Received data from frontend:", data)
 
-        # Extract and validate product idea text
-        text = (data.get("text") or "").strip()
-        # Clamp number of reviews between 1 and 20
-        num_reviews = max(1, min(20, int(data.get("numReviews", 5))))
-
-        # Extract persona configuration parameters
-        selected_characteristics = data.get("characteristics", [])
-        age_min = data.get("ageMin")
-        age_max = data.get("ageMax")
-        gender = data.get("gender")
-        location = data.get("location")
+            text = (data.get("text") or "").strip()
+            num_reviews = max(1, min(20, int(data.get("numReviews", 5))))
+            selected_characteristics = data.get("characteristics", [])
+            age_min = parse_int(data.get("ageMin"))
+            age_max = parse_int(data.get("ageMax"))
+            gender = (data.get("gender") or "").strip() or None
+            location = (data.get("location") or "").strip() or None
+            document_text = None
 
         # Validate required inputs
         if not text:
             return jsonify({"error": "Please enter a product idea!"}), 400
         if not selected_characteristics:
             return jsonify({"error": "Please select at least one persona trait!"}), 400
-
-        # If API is not available, return fallback personas
+        
         if not genai or not GEMINI_API_KEY:
             fallback, message = build_fallback_personas(text, num_reviews, selected_characteristics)
             session["personas"] = fallback
@@ -244,16 +595,16 @@ def generate():
                         "error": "Gemini API key missing",
                         "fallback": fallback,
                         "message": message,
+                        "glows": [],
+                        "grows": [],
                     }
                 ),
                 500,
             )
-
         # Build task list for parallel processing
         # Each task gets different intensity combinations for variety
         tasks = []
         for i in range(num_reviews):
-            # Rotate through intensity levels to create diverse personas
             intensities = {
                 char: INTENSITY_LEVELS[(i + j) % len(INTENSITY_LEVELS)]
                 for j, char in enumerate(selected_characteristics)
@@ -268,6 +619,7 @@ def generate():
                     "age_max": age_max,
                     "gender": gender,
                     "location": location,
+                    "document_text": document_text,
                 }
             )
 
@@ -286,6 +638,7 @@ def generate():
                     t["age_max"],
                     t["gender"],
                     t["location"],
+                    t.get("document_text"),
                 ): t
                 for t in tasks
             }
@@ -296,6 +649,9 @@ def generate():
                 try:
                     review, err = future.result()
                     if review:
+                        persona_name = review["metadata"].get("persona_name")
+                        if not persona_name:
+                            review["metadata"]["persona_name"] = f"Persona {task_info['id']}"
                         reviews.append(
                             {
                                 "id": task_info["id"],
@@ -308,7 +664,7 @@ def generate():
                         errors.append(f"Persona {task_info['id']}: {err}")
                 except Exception as exc:  # pragma: no cover
                     errors.append(f"Persona {task_info['id']}: {exc}")
-
+        
         # Sort reviews by ID for consistent ordering
         reviews.sort(key=lambda item: item["id"])
 
@@ -317,7 +673,7 @@ def generate():
             fallback, message = build_fallback_personas(text, num_reviews, selected_characteristics)
             session["personas"] = fallback
             session.modified = True
-            print("fallback activated")
+            print(f"🔍 [generate] No reviews generated, using fallback personas")
             return (
                 jsonify(
                     {
@@ -325,14 +681,22 @@ def generate():
                         "fallback": fallback,
                         "message": message,
                         "details": errors,
+                        "glows": [],
+                        "grows": [],
                     }
                 ),
                 500,
             )
-
+        
         # Store generated personas in session for chat feature
         session["personas"] = reviews
         session.modified = True
+
+        # Generate summary (Glows and Grows) from all reviews
+        print(f"🔍 About to call generate_feedback_summary with {len(reviews)} reviews")
+        print(f"🔍 Reviews data: {[r.get('id') for r in reviews]}")
+        glows, grows = generate_feedback_summary(reviews)
+        print(f"🔍 Summary generated: {len(glows)} glows, {len(grows)} grows")
 
         # Build successful response with all generated reviews
         result = {
@@ -342,9 +706,11 @@ def generate():
             "successCount": len(reviews),
             "errorCount": len(errors),
             "errors": errors or None,
+            "glows": glows,
+            "grows": grows,
         }
 
-        print(f"✅ Successfully generated {len(reviews)} reviews.")
+        print(f"✅ Successfully generated {len(reviews)} reviews with summary.")
         return jsonify(result)
 
     except Exception as exc:  # pragma: no cover - unexpected failure
@@ -363,6 +729,8 @@ def generate():
                     "error": str(exc),
                     "fallback": fallback,
                     "message": message,
+                    "glows": [],
+                    "grows": [],
                 }
             ),
             500,
@@ -377,11 +745,9 @@ def chat(persona_id):
     Loads persona data from session and displays their initial review
     along with metadata to enable conversational follow-up.
     """
-    # Retrieve personas from session storage
     personas = session.get("personas", [])
     persona = next((p for p in personas if p.get("id") == persona_id), None)
 
-    # If persona not found, render with placeholder data
     if not persona:
         return render_template(
             "chat.html",
@@ -392,7 +758,7 @@ def chat(persona_id):
             characteristics=[],
             sentiment_rating=None,
         )
-
+    
     # Extract persona metadata for display
     metadata = persona.get("metadata", {})
     persona_name = metadata.get("persona_name") or f"Persona {persona_id}"
@@ -426,7 +792,7 @@ def persona_reply(persona_id):
     user_msg = (payload.get("message") or "").strip()
     if not user_msg:
         return jsonify({"error": "Empty message"}), 400
-
+    
     # Retrieve the specific persona from session
     personas = session.get("personas", [])
     persona = next((p for p in personas if p.get("id") == persona_id), None)
@@ -449,7 +815,6 @@ def persona_reply(persona_id):
             }
         )
 
-    # Construct chat prompt that maintains persona consistency
     chat_prompt = f"""
 Continue a conversation as {tone_description}.
 Earlier you provided this feedback:
@@ -480,49 +845,45 @@ User: {user_msg}
 # ============================================================
 
 def build_fallback_personas(text, num_reviewers, selected_characteristics):
-    """
-    Generate simulated personas when Gemini API is unavailable.
-
-    Provides pre-written feedback from diverse persona templates to ensure
-    the application remains functional even without API access (offline mode).
-    """
-    # Pre-defined persona templates with diverse backgrounds
+    """Return simulated personas when live generation is unavailable."""
     base_personas = [
         {
+            "persona_name": "Avery Chen",
             "persona_descriptor": "Strategy-focused product designer",
             "tone": "supportive",
             "location": "North America",
         },
         {
+            "persona_name": "Jordan Ramirez",
             "persona_descriptor": "Data-driven growth specialist",
             "tone": "analytical",
             "location": "Europe",
         },
         {
+            "persona_name": "Morgan Patel",
             "persona_descriptor": "User empathy researcher",
             "tone": "empathetic",
             "location": "Asia",
         },
         {
+            "persona_name": "Sam Rivera",
             "persona_descriptor": "Creative marketing strategist",
             "tone": "enthusiastic",
             "location": "South America",
         },
         {
+            "persona_name": "Lena Schmidt",
             "persona_descriptor": "Detail-oriented quality assurance",
             "tone": "critical",
             "location": "Europe",
         },
     ]
 
-    # Default characteristics if none provided
     if not selected_characteristics:
         selected_characteristics = ["Balanced", "Insightful"]
 
-    # Create shortened version of product idea for display
     snippet = text[:60] + ("…" if len(text) > 60 else "")
     reviews = []
-
     # Generate fallback reviews by cycling through persona templates
     for idx in range(max(1, num_reviewers)):
         # Cycle through available templates
@@ -560,10 +921,5 @@ def build_fallback_personas(text, num_reviewers, selected_characteristics):
     return reviews, message
 
 
-# ============================================================
-# APPLICATION ENTRY POINT
-# ============================================================
-
 if __name__ == "__main__":
-    # Run Flask development server with debug mode enabled
     app.run(debug=True)

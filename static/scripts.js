@@ -26,6 +26,22 @@
     const ageMaxValue = document.getElementById("ageMaxValue");
     const generateButton = document.getElementById("generateButton");
     const closeButton = document.getElementById("feedbackCloseButton");
+    const ideaFileInput = document.getElementById("ideaFile");
+    const attachmentDisplay = document.getElementById("attachmentDisplay");
+    const attachmentName = document.getElementById("attachmentName");
+
+    // Handle file selection
+    if (ideaFileInput && attachmentDisplay && attachmentName) {
+      ideaFileInput.addEventListener("change", (event) => {
+        const file = event.target.files[0];
+        if (file) {
+          attachmentName.textContent = file.name;
+          attachmentDisplay.classList.remove("hidden");
+        } else {
+          attachmentDisplay.classList.add("hidden");
+        }
+      });
+    }
 
     if (reviewCountSlider && reviewCountValue) {
       reviewCountValue.textContent = reviewCountSlider.value;
@@ -197,6 +213,7 @@
     const location = document.getElementById("location")?.value.trim() || "";
     const generateButton = document.getElementById("generateButton");
     const characteristics = Array.from(selectedCharacteristics);
+    const ideaFileInput = document.getElementById("ideaFile");
 
     if (!text) {
       showError("Please enter a product idea first!");
@@ -205,10 +222,6 @@
     if (!characteristics.length) {
       showError("Please select at least one characteristic for your personas!");
       return;
-
-
-
-
     }
 
     clearError();
@@ -218,12 +231,38 @@
     }
 
     try {
-      const res = await fetch("/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ text, numReviews, ageMin, ageMax, gender, location, characteristics }),
-      });
+      // Check if a file is attached
+      const file = ideaFileInput?.files[0];
+      
+      let res;
+      if (file) {
+        // Use FormData if file is attached
+        const formData = new FormData();
+        formData.append("text", text);
+        formData.append("numReviews", numReviews.toString());
+        formData.append("ageMin", ageMin.toString());
+        formData.append("ageMax", ageMax.toString());
+        formData.append("gender", gender);
+        formData.append("location", location);
+        characteristics.forEach(char => {
+          formData.append("characteristics", char);
+        });
+        formData.append("ideaFile", file);
+
+        res = await fetch("/generate", {
+          method: "POST",
+          credentials: "same-origin",
+          body: formData,
+        });
+      } else {
+        // Use JSON if no file (backward compatibility)
+        res = await fetch("/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ text, numReviews, ageMin, ageMax, gender, location, characteristics }),
+        });
+      }
 
       const data = await res.json();
       if (!res.ok) {
@@ -247,6 +286,7 @@
     const overlay = document.getElementById("feedbackOverlay");
     const cardsContainer = document.getElementById("feedbackCards");
     const summary = document.getElementById("feedbackSummary");
+    const summarySection = document.getElementById("feedbackSummarySection");
     const mainWrapper = document.querySelector(".page-wrapper");
     if (!overlay || !cardsContainer || !summary) return;
 
@@ -276,12 +316,105 @@
         usedNames.add(meta.persona_name);
         cardsContainer.appendChild(buildPersonaCard(review));
       });
+
+      // Build and show summary section
+      if (summarySection) {
+        const glows = data.glows || [];
+        const grows = data.grows || [];
+        buildSummarySection(summarySection, reviews, avg10, glows, grows);
+        summarySection.classList.remove("hidden");
+      }
     } else {
       summary.textContent = data.message || data.fallbackMessage || "No responses generated. Adjust inputs and retry.";
+      if (summarySection) {
+        summarySection.classList.add("hidden");
+      }
     }
 
     overlay.classList.remove("hidden");
     mainWrapper?.classList.add("hidden");
+  }
+
+  function buildSummarySection(container, reviews, avgRating10, glows = [], grows = []) {
+    const avgRating5 = (avgRating10 / 2).toFixed(1);
+    const filledStars = Math.round(avgRating10 / 2);
+    const hasHalfStar = (avgRating10 / 2) % 1 >= 0.5 && filledStars < 5;
+    const gradientId = `halfGradient-${Date.now()}`;
+
+    const starsHtml = Array.from({ length: 5 }).map((_, i) => {
+      if (i < filledStars) {
+        return `<svg class="summary-star summary-star-filled" viewBox="0 0 24 24">
+          <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
+        </svg>`;
+      } else if (i === filledStars && hasHalfStar) {
+        return `<svg class="summary-star summary-star-half" viewBox="0 0 24 24">
+          <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z" fill="url(#${gradientId})"/>
+        </svg>`;
+      } else {
+        return `<svg class="summary-star" viewBox="0 0 24 24">
+          <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
+        </svg>`;
+      }
+    }).join("");
+
+    // Use provided glows/grows or fallback to placeholder text
+    const glowsList = glows.length > 0 
+      ? glows.map(glow => `<li>${escapeHtml(glow)}</li>`).join("")
+      : `<li>Strong value proposition that addresses a clear market need</li>
+         <li>Innovative approach to solving the problem</li>
+         <li>Well-defined target audience and use cases</li>
+         <li>Potential for scalability and growth</li>`;
+
+    const growsList = grows.length > 0
+      ? grows.map(grow => `<li>${escapeHtml(grow)}</li>`).join("")
+      : `<li>Consider refining the user experience and onboarding flow</li>
+         <li>Clarify the monetization strategy and pricing model</li>
+         <li>Address potential technical challenges and scalability concerns</li>
+         <li>Develop a more comprehensive go-to-market strategy</li>`;
+
+    container.innerHTML = `
+      <svg style="position: absolute; width: 0; height: 0;">
+        <defs>
+          <linearGradient id="${gradientId}">
+            <stop offset="50%" stop-color="#facc15"/>
+            <stop offset="50%" stop-color="rgba(55, 65, 81, 0.7)"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="summary-header">
+        <h3 class="summary-title">Overall Feedback Summary</h3>
+        <div class="summary-rating-display">
+          <div class="summary-stars">
+            ${starsHtml}
+          </div>
+          <div class="summary-rating-value">${avgRating5}/5</div>
+        </div>
+      </div>
+      <div class="summary-content">
+        <div class="summary-column summary-glows">
+          <div class="summary-column-header">
+            <div class="summary-icon summary-icon-glow">✨</div>
+            <h4 class="summary-column-title">Glows</h4>
+          </div>
+          <div class="summary-column-content">
+            <ul class="summary-list">
+              ${glowsList}
+            </ul>
+          </div>
+        </div>
+        <div class="summary-column summary-grows">
+          <div class="summary-column-header">
+            <div class="summary-icon summary-icon-grow">🌱</div>
+            <h4 class="summary-column-title">Grows</h4>
+          </div>
+          <div class="summary-column-content">
+            <ul class="summary-list">
+              ${growsList}
+            </ul>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function hideOverlay() {
@@ -520,4 +653,14 @@
   };
   window.hideOverlay = hideOverlay;
   window.startCall = startCall;
+  window.removeAttachment = () => {
+    const ideaFileInput = document.getElementById("ideaFile");
+    const attachmentDisplay = document.getElementById("attachmentDisplay");
+    if (ideaFileInput) {
+      ideaFileInput.value = "";
+    }
+    if (attachmentDisplay) {
+      attachmentDisplay.classList.add("hidden");
+    }
+  };
 })();
