@@ -1,8 +1,14 @@
+# ============================================================
+# IMPORTS AND DEPENDENCIES
+# ============================================================
+# Flask imports for web server functionality
 from flask import Flask, render_template, request, jsonify, session
 from dotenv import load_dotenv
 import os
 
-
+# Utility imports for processing and error handling
+import math
+import random
 import re
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -121,6 +127,27 @@ def parse_uploaded_file(file):
     except Exception as exc:
         return None, f"Error processing file: {str(exc)}"
 
+# Random name pools for persona generation
+FIRST_NAMES = [
+    "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Avery", "Quinn",
+    "Sage", "River", "Phoenix", "Dakota", "Cameron", "Skyler", "Rowan", "Harper",
+    "Finley", "Emerson", "Reese", "Parker", "Blake", "Kendall", "Hayden", "Peyton",
+    "Drew", "Logan", "Charlie", "Jamie", "Jessie", "Micah", "Adrian", "Ash",
+    "Sam", "Kai", "Ellis", "Elliot", "Aubrey", "Bailey", "Brook", "Dylan"
+]
+
+LAST_NAMES = [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+    "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson",
+    "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson",
+    "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson", "Walker",
+    "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores"
+]
+
+
+# ============================================================
+# ROUTE HANDLERS
+# ============================================================
 
 @app.route("/")
 def index():
@@ -157,13 +184,18 @@ def generate_review(  # pylint: disable=too-many-arguments
     else:
         personality = personality_parts[0]
 
+    # Build demographic context parts (age, gender, location)
     context_parts = []
+    generated_age = None
 
     if age_min and age_max:
-        context_parts.append(f"age {age_min}-{age_max}")
+        generated_age = random.randint(age_min, age_max)
+        context_parts.append(f"age {generated_age}")
     elif age_min:
+        generated_age = age_min
         context_parts.append(f"age {age_min}+")
     elif age_max:
+        generated_age = age_max
         context_parts.append(f"age up to {age_max}")
     if gender:
         context_parts.append(f"gender {gender}")
@@ -208,16 +240,24 @@ add a rating between 1 and 10 formatted exactly as: RATING: X
         if not review_text:
             review_text = "No feedback received."
 
+        # Generate random name for persona
+        first_name = random.choice(FIRST_NAMES)
+        last_name = random.choice(LAST_NAMES)
+        if generated_age:
+            persona_name = f"{first_name} {last_name}, {generated_age}"
+        else:
+            persona_name = f"{first_name} {last_name}"
+
+        # Package review with metadata about the persona
         metadata = {
-            "persona_name": None,  # Assigned later
+            "persona_name": persona_name,
             "persona_descriptor": reviewer_context,
             "characteristics": selected_characteristics,
             "characteristic_intensities": characteristic_intensities,
-
-
             "sentiment_rating": rating,
             "personality_description": personality,
             "age_range": f"{age_min}-{age_max}" if age_min and age_max else None,
+            "age": generated_age,
             "gender": gender or None,
             "location": location or None,
         }
@@ -363,7 +403,12 @@ Keep each point concise (one sentence or short phrase). Focus on the most common
 
 @app.route("/generate", methods=["POST"])
 def generate():
-    """Handle frontend POST to generate multiple feedbacks."""
+    """
+    Main API endpoint to generate multiple persona-based product reviews.
+
+    Accepts product idea and persona parameters, uses ThreadPoolExecutor to
+    generate multiple AI reviews concurrently, and stores results in session.
+    """
     try:
         # Check if request contains files (multipart/form-data) or JSON
         if request.files:
@@ -390,7 +435,7 @@ def generate():
         else:
             # Handle JSON request (backward compatibility)
             data = request.get_json(silent=True) or {}
-            print("\n✅ Received data from frontend:", data)
+            print("Received data from frontend:", data)
 
             text = (data.get("text") or "").strip()
             num_reviews = max(1, min(20, int(data.get("numReviews", 5))))
@@ -400,13 +445,13 @@ def generate():
             gender = data.get("gender")
             location = data.get("location")
             document_text = None
-        
-        print(f"🔍 [generate] text: {text}")
 
+        # Validate required inputs
         if not text:
             return jsonify({"error": "Please enter a product idea!"}), 400
         if not selected_characteristics:
             return jsonify({"error": "Please select at least one persona trait!"}), 400
+        
         if not genai or not GEMINI_API_KEY:
             fallback, message = build_fallback_personas(text, num_reviews, selected_characteristics)
             session["personas"] = fallback
@@ -423,7 +468,8 @@ def generate():
                 ),
                 500,
             )
-
+        # Build task list for parallel processing
+        # Each task gets different intensity combinations for variety
         tasks = []
         for i in range(num_reviews):
             intensities = {
@@ -446,7 +492,9 @@ def generate():
 
         reviews, errors = [], []
 
+        # Use ThreadPoolExecutor to generate reviews concurrently (max 10 parallel)
         with ThreadPoolExecutor(max_workers=min(10, num_reviews)) as executor:
+            # Submit all review generation tasks
             futures = {
                 executor.submit(
                     generate_review,
@@ -462,6 +510,7 @@ def generate():
                 for t in tasks
             }
 
+            # Collect results as they complete
             for future in as_completed(futures):
                 task_info = futures[future]
                 try:
@@ -482,9 +531,11 @@ def generate():
                         errors.append(f"Persona {task_info['id']}: {err}")
                 except Exception as exc:  # pragma: no cover
                     errors.append(f"Persona {task_info['id']}: {exc}")
-
+        
+        # Sort reviews by ID for consistent ordering
         reviews.sort(key=lambda item: item["id"])
 
+        # If no reviews were generated successfully, return fallback
         if not reviews:
             fallback, message = build_fallback_personas(text, num_reviews, selected_characteristics)
             session["personas"] = fallback
@@ -503,7 +554,8 @@ def generate():
                 ),
                 500,
             )
-
+        
+        # Store generated personas in session for chat feature
         session["personas"] = reviews
         session.modified = True
 
@@ -513,6 +565,7 @@ def generate():
         glows, grows = generate_feedback_summary(reviews)
         print(f"🔍 Summary generated: {len(glows)} glows, {len(grows)} grows")
 
+        # Build successful response with all generated reviews
         result = {
             "inputText": text,
             "numReviews": num_reviews,
@@ -528,6 +581,7 @@ def generate():
         return jsonify(result)
 
     except Exception as exc:  # pragma: no cover - unexpected failure
+        # Handle catastrophic errors gracefully with fallback personas
         print("🔥 Fatal error in /generate route:", exc)
         traceback.print_exc()
         text = (data.get("text") or "") if "data" in locals() else ""
@@ -552,7 +606,12 @@ def generate():
 
 @app.route("/chat/<int:persona_id>")
 def chat(persona_id):
-    """Render the chat interface for a specific persona."""
+    """
+    Render the chat interface for a specific persona.
+
+    Loads persona data from session and displays their initial review
+    along with metadata to enable conversational follow-up.
+    """
     personas = session.get("personas", [])
     persona = next((p for p in personas if p.get("id") == persona_id), None)
 
@@ -566,7 +625,8 @@ def chat(persona_id):
             characteristics=[],
             sentiment_rating=None,
         )
-
+    
+    # Extract persona metadata for display
     metadata = persona.get("metadata", {})
     persona_name = metadata.get("persona_name") or f"Persona {persona_id}"
     descriptor = metadata.get("persona_descriptor") or metadata.get("personality_description") or "Customer Persona"
@@ -574,6 +634,7 @@ def chat(persona_id):
     review_text = persona.get("review", "No review available.")
     sentiment_rating = metadata.get("sentiment_rating")
 
+    # Render chat interface with persona context
     return render_template(
         "chat.html",
         persona_id=persona_id,
@@ -587,21 +648,30 @@ def chat(persona_id):
 
 @app.route("/api/chat/<int:persona_id>", methods=["POST"])
 def persona_reply(persona_id):
-    """Generate a persona-specific chat reply."""
+    """
+    API endpoint to generate conversational replies from a specific persona.
+
+    Maintains persona consistency by referencing their original review
+    and personality traits when responding to user questions.
+    """
+    # Parse user's message from request
     payload = request.get_json(silent=True) or {}
     user_msg = (payload.get("message") or "").strip()
     if not user_msg:
         return jsonify({"error": "Empty message"}), 400
-
+    
+    # Retrieve the specific persona from session
     personas = session.get("personas", [])
     persona = next((p for p in personas if p.get("id") == persona_id), None)
     if not persona:
         return jsonify({"error": "Persona not found in session"}), 404
 
+    # Extract persona context for maintaining consistent tone
     metadata = persona.get("metadata", {})
     tone_description = metadata.get("persona_descriptor") or metadata.get("personality_description") or "an insightful customer persona"
     review_summary = persona.get("review", "")
 
+    # Return offline message if API is unavailable
     if not genai or not GEMINI_API_KEY:
         return jsonify(
             {
@@ -624,7 +694,8 @@ User: {user_msg}
 """
 
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        # Generate persona-consistent response using Gemini
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
         response = model.generate_content(chat_prompt)
         reply = (response.text or "").strip()
         if not reply:
@@ -635,6 +706,10 @@ User: {user_msg}
         traceback.print_exc()
         return jsonify({"error": str(exc)}), 500
 
+
+# ============================================================
+# FALLBACK SYSTEM
+# ============================================================
 
 def build_fallback_personas(text, num_reviewers, selected_characteristics):
     """Return simulated personas when live generation is unavailable."""
@@ -676,14 +751,20 @@ def build_fallback_personas(text, num_reviewers, selected_characteristics):
 
     snippet = text[:60] + ("…" if len(text) > 60 else "")
     reviews = []
+    # Generate fallback reviews by cycling through persona templates
     for idx in range(max(1, num_reviewers)):
+        # Cycle through available templates
         template = base_personas[idx % len(base_personas)]
-        suffix = idx // len(base_personas) + 1
-        persona_name = template["persona_name"]
-        if suffix > 1:
-            persona_name = f"{persona_name} {suffix}"
 
-        rating = 6 + (idx % 3)  # 6-8 out of 10
+        # Generate random name for fallback persona
+        first_name = random.choice(FIRST_NAMES)
+        last_name = random.choice(LAST_NAMES)
+        persona_name = f"{first_name} {last_name}"
+
+        # Vary ratings slightly (6-8 out of 10)
+        rating = 6 + (idx % 3)
+
+        # Build fallback review with generic but helpful feedback
         reviews.append(
             {
                 "id": idx + 1,
