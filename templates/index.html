@@ -9,113 +9,141 @@
 </head>
 
 <body class="neural-bg">
-  <div class="bg-animated"></div>
-
-  <!-- ===== HEADER ===== -->
-  <header class="hero">
-    <h1 class="hero-title">NeuralFeedback</h1>
-    <p class="hero-subtitle">
-      Define your concept, choose your audience, and let AI personas generate intelligent feedback.
-    </p>
-  </header>
-
-  <!-- ===== MAIN CONTENT ===== -->
-  <main class="main-container page-wrapper">
-    <!-- STEP 1 -->
-    <section class="panel panel-left">
-      <h2 class="panel-title cyan">Step 1 • Pitch Your Concept</h2>
-      <p class="panel-desc">Describe your product or idea for context.</p>
-
-      <textarea id="textInput" placeholder="Explain what you’re building, who it’s for, and why it matters..."></textarea>
-
-      <div class="upload-section">
-        <label for="ideaFile" class="upload-box">
-          <input type="file" id="ideaFile" class="hidden-input" />
-          <span>Attach a pitch deck, notes, or document (optional)</span>
-        </label>
-        <button class="btn-primary" onclick="document.getElementById('ideaFile').click();">
-          Upload Supporting Detail
-        </button>
-      </div>
-    </section>
-
-    <!-- STEP 2 -->
-    <section class="panel panel-right">
-      <h2 class="panel-title violet">Step 2 • Tailor Your Audience</h2>
-      <p class="panel-desc">Select AI personas with diverse feedback perspectives.</p>
-
-      <div class="traits-grid">
-        {% for characteristic in characteristics %}
-        <button
-          type="button"
-          class="trait-btn"
-          data-characteristic="{{ characteristic }}"
-          onclick="toggleCharacteristic(this)"
-        >
-          {{ characteristic|title }}
-        </button>
-        {% endfor %}
-      </div>
-
-      <div class="sliders">
-        <label>Number of Responses: <span id="reviewCountValue">5</span></label>
-        <input type="range" id="reviewCount" min="1" max="20" value="5" class="slider" />
-
-        <label>Age Range:</label>
-        <div class="dual-slider">
-          <input type="range" id="ageMin" min="18" max="100" value="18" class="dual-input" />
-          <input type="range" id="ageMax" min="18" max="100" value="65" class="dual-input" />
-          <div class="dual-progress" id="ageRangeProgress"></div>
+    <div class="bg-animated"></div>
+  
+    <div class="page-wrapper">
+      <header class="hero">
+        <h1 class="hero-title">NeuralFeedback</h1>
+        <p class="hero-subtitle">
+          Define your concept, choose your audience, and let AI personas generate intelligent feedback.
+        </p>
+      </header>
+  
+      <main class="main-container">
+        <!-- STEP 1 -->
+        <section class="panel panel-left">
+          <h2 class="panel-title cyan">Step 1 • Pitch Your Concept</h2>
+          <p class="panel-desc">Describe your product or idea for context.</p>
+  
+          <textarea
+            id="textInput"
+            placeholder="Explain what you’re building, who it’s for, and why it matters..."
+          ></textarea>
+  
+          <div class="upload-section">
+            <label for="ideaFile" class="upload-box">
+              <input type="file" id="ideaFile" class="hidden-input">
+              <span>Attach a pitch deck, notes, or document (optional)</span>
+            </label>
+            <button class="btn-primary" type="button"
+                    onclick="document.getElementById('ideaFile').click();">
+              Upload Supporting Detail
+            </button>
+          </div>
+        </section>
+  
+        <!-- STEP 2 -->
+        <section class="panel panel-right">
+          <h2 class="panel-title violet">Step 2 • Tailor Your Audience</h2>
+          <p class="panel-desc">Select AI personas with diverse feedback perspectives.</p>
+  
+          <div class="traits-grid">
+            {% for characteristic in characteristics %}
+            <button type="button"
+                    class="trait-btn"
+                    data-characteristic="{{ characteristic }}"
+                    onclick="toggleCharacteristic(this)">
+              {{ characteristic|title }}
+            </button>
+            {% endfor %}
+          </div>
+  
+          <div class="sliders">
+            <label class="slider-label">
+              Number of Responses:
+              <span id="reviewCountValue">5</span>
+            </label>
+            <input type="range" id="reviewCount" min="1" max="20" value="5" class="slider">
+  
+            <label class="slider-label mt-4">Age Range:</label>
+            <div class="dual-slider">
+              <input type="range" id="ageMin" min="18" max="100" value="18" class="dual-input">
+              <input type="range" id="ageMax" min="18" max="100" value="65" class="dual-input">
+              <div class="dual-progress-track">
+                <div class="dual-progress" id="ageRangeProgress"></div>
+              </div>
+            </div>
+            <div class="age-values">
+              <span id="ageMinValue">18</span>
+              <span id="ageMaxValue">65</span>
+            </div>
+          </div>
+  
+          <div class="dropdowns">
+            <select id="gender" class="dropdown">
+              <option value="">Any Gender</option>
+              <option value="Female">Female</option>
+              <option value="Male">Male</option>
+              <option value="Non-binary">Non-binary</option>
+              <option value="Prefer not to say">Prefer not to say</option>
+            </select>
+  
+            <select id="location" class="dropdown">
+              <option value="">Any Location</option>
+              <option value="North America">North America</option>
+              <option value="Europe">Europe</option>
+              <option value="Asia">Asia</option>
+              <option value="Africa">Africa</option>
+              <option value="South America">South America</option>
+              <option value="Australia">Australia</option>
+              <option value="Middle East">Middle East</option>
+            </select>
+          </div>
+  
+          <button id="generateButton"
+                  class="btn-generate"
+                  type="button"
+                  onclick="handleSubmit()">
+            Generate AI Client Responses
+          </button>
+        </section>
+      </main>
+  
+      <div id="error" class="error"></div>
+    </div>
+  
+    <!-- FEEDBACK OVERLAY (RESULTS GRID) -->
+    <section id="feedbackOverlay" class="neon-overlay hidden" aria-live="polite">
+      <div class="overlay-inner">
+        <header class="overlay-header">
+          <div>
+            <h2 id="feedbackSummary" class="overlay-title">
+              Generated persona responses
+            </h2>
+            <p class="overlay-subtitle">
+              Click a persona to review their feedback or jump into a conversation.
+            </p>
+          </div>
+          <button id="feedbackCloseButton"
+                  type="button"
+                  class="icon-btn icon-btn-close"
+                  aria-label="Back to setup">
+            ✕
+          </button>
+        </header>
+  
+        <div id="feedbackCards" class="persona-grid">
+          <!-- cards injected by scripts.js -->
         </div>
-        <div class="age-values">
-          <span id="ageMinValue">18</span>
-          <span id="ageMaxValue">65</span>
-        </div>
-      </div>
-
-      <div class="dropdowns">
-        <select id="gender" class="dropdown">
-          <option value="">Any Gender</option>
-          <option value="Female">Female</option>
-          <option value="Male">Male</option>
-          <option value="Non-binary">Non-binary</option>
-        </select>
-        <select id="location" class="dropdown">
-          <option value="">Any Location</option>
-          <option value="North America">North America</option>
-          <option value="Europe">Europe</option>
-          <option value="Asia">Asia</option>
-          <option value="Africa">Africa</option>
-          <option value="South America">South America</option>
-          <option value="Australia">Australia</option>
-        </select>
-      </div>
-
-      <button id="generateButton" class="btn-generate" onclick="handleSubmit()">
-        Generate AI Client Responses
-      </button>
-    </section>
-  </main>
-
-  <div id="error" class="error"></div>
-
-  <!-- ===== FEEDBACK OVERLAY (ADDED) ===== -->
-  <section id="feedbackOverlay" class="hidden neon-overlay">
-    <div class="feedback-wrapper">
-      <h2 id="feedbackSummary" class="feedback-summary">
-        Generating persona insights...
-      </h2>
-
-      <div id="feedbackCards" class="feedback-grid"></div>
-
-      <div class="feedback-actions">
-        <button id="feedbackRestartButton" class="neon-btn">
+  
+        <!-- Start New Session button kept for now but visually hidden -->
+        <button id="feedbackRestartButton" type="button" class="sr-only">
           Start New Session
         </button>
       </div>
-    </div>
-  </section>
-
-  <script src="{{ url_for('static', filename='scripts.js') }}"></script>
-</body>
-</html>
+    </section>
+  
+    <script src="{{ url_for('static', filename='scripts.js') }}"></script>
+  </body>
+  </html>
+  
