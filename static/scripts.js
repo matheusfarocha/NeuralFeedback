@@ -17,15 +17,20 @@
     setupChatPage();
   });
 
-  function setupIndexPage() {
-    const reviewCountSlider = document.getElementById("reviewCount");
-    const reviewCountValue = document.getElementById("reviewCountValue");
-    const ageMinSlider = document.getElementById("ageMin");
-    const ageMaxSlider = document.getElementById("ageMax");
-    const ageMinValue = document.getElementById("ageMinValue");
-    const ageMaxValue = document.getElementById("ageMaxValue");
-    const generateButton = document.getElementById("generateButton");
-    const closeButton = document.getElementById("feedbackCloseButton");
+    function setupIndexPage() {
+        const reviewCountSlider = document.getElementById('reviewCount');
+        const reviewCountValue = document.getElementById('reviewCountValue');
+        const ageMinSlider = document.getElementById('ageMin');
+        const ageMaxSlider = document.getElementById('ageMax');
+        const ageMinValue = document.getElementById('ageMinValue');
+        const ageMaxValue = document.getElementById('ageMaxValue');
+        const generateButton = document.getElementById('generateButton');
+        const fileInput = document.getElementById('ideaFile');
+
+        // Setup file attachment handling
+        if (fileInput) {
+            fileInput.addEventListener('change', handleFileSelection);
+        }
 
     if (reviewCountSlider && reviewCountValue) {
       reviewCountValue.textContent = reviewCountSlider.value;
@@ -378,26 +383,87 @@
       };
     });
 
-    return {
-      reviews,
-      fallbackMessage: "Using simulated persona insights (offline mode).",
-      message: "Using simulated persona insights (offline mode).",
-    };
-  }
-
-  window.handleSubmit = handleSubmit;
-  window.toggleCharacteristic = button => {
-    const characteristic = button.getAttribute("data-characteristic");
-    if (!characteristic) return;
-    if (selectedCharacteristics.has(characteristic)) {
-      selectedCharacteristics.delete(characteristic);
-      button.classList.remove("selected");
-    } else {
-      selectedCharacteristics.add(characteristic);
-      button.classList.add("selected");
+        return {
+            reviews,
+            fallbackMessage: 'Our live reviewers were unavailable, so here are simulated persona insights instead.',
+        };
     }
-  };
-  window.hideOverlay = hideOverlay;
-  window.startCall = startCall;
+
+    async function handleFileSelection(event) {
+        const fileInput = event.target;
+        const file = fileInput.files[0];
+        const attachmentDisplay = document.getElementById('attachmentDisplay');
+        const attachmentName = document.getElementById('attachmentName');
+
+        if (file) {
+            // Show the attachment display
+            if (attachmentDisplay) {
+                attachmentDisplay.classList.remove('hidden');
+            }
+            if (attachmentName) {
+                attachmentName.textContent = file.name;
+            }
+
+            // If it's a PDF, DOC, or DOCX, upload and parse it
+            const filenameLower = file.name.toLowerCase();
+            if (filenameLower.endsWith('.pdf') || 
+                filenameLower.endsWith('.doc') || 
+                filenameLower.endsWith('.docx')) {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const response = await fetch('/parse-pdf', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+                    
+                    if (response.ok && result.success) {
+                        console.log(`✅ ${result.file_type} parsed successfully:`, result.message);
+                        console.log(`📄 Extracted ${result.text_length} characters`);
+                    } else {
+                        console.error(`❌ Failed to parse ${result.file_type || 'file'}:`, result.error);
+                    }
+                } catch (error) {
+                    console.error('❌ Error uploading file:', error);
+                }
+            }
+        } else {
+            // Hide the attachment display if no file
+            if (attachmentDisplay) {
+                attachmentDisplay.classList.add('hidden');
+            }
+        }
+    }
+
+    function removeAttachment() {
+        const fileInput = document.getElementById('ideaFile');
+        const attachmentDisplay = document.getElementById('attachmentDisplay');
+        const attachmentName = document.getElementById('attachmentName');
+
+        if (fileInput) {
+            const file = fileInput.files[0];
+            // Clear the file from the input
+            fileInput.value = '';
+            
+            // Note: The parsed text remains in PARSED_PDF_TEXT dictionary on the backend
+            // You may want to add an endpoint to clear it if needed
+        }
+        if (attachmentDisplay) {
+            attachmentDisplay.classList.add('hidden');
+        }
+        if (attachmentName) {
+            attachmentName.textContent = '';
+        }
+    }
+
+    // Expose functions used from HTML
+    window.handleSubmit = handleSubmit;
+    window.toggleCharacteristic = toggleCharacteristic;
+    window.showMetadata = showMetadata;
+    window.closeModal = closeModal;
+    window.removeAttachment = removeAttachment;
 })();
   

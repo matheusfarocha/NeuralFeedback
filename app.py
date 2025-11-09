@@ -3,12 +3,11 @@ from dotenv import load_dotenv
 import os
 import re
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-try:
-    import google.generativeai as genai  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - optional dependency
-    genai = None  # type: ignore[assignment]
+import pdfplumber
+from docx import Document
+from io import BytesIO
+import subprocess
+import tempfile
 
 # Load environment variables from .env file
 load_dotenv()
@@ -40,30 +39,213 @@ AVAILABLE_CHARACTERISTICS = [
     "adventurous",
 ]
 
+# Store parsed PDF text
+# Key: filename, Value: extracted text string
+# You can access this dictionary to get the parsed PDF text for sending to Gemini API
+PARSED_PDF_TEXT = {}
+
 
 @app.route("/")
 def index():
     """Render main page"""
-    return render_template("index.html", characteristics=AVAILABLE_CHARACTERISTICS)
+    return render_template('index.html', characteristics=AVAILABLE_CHARACTERISTICS)
 
 
-def generate_review(  # pylint: disable=too-many-arguments
-    prompt,
-    selected_characteristics,
-    characteristic_intensities,
-    age_min=None,
-    age_max=None,
-    gender=None,
-    location=None,
-):
-    """Generate a single review using the Gemini API."""
-    if not genai or not GEMINI_API_KEY:
+def parse_pdf(file_content):
+    """
+    Parse PDF file and extract text.
+    
+    Args:
+        file_content: Bytes content of the PDF file
+        
+    Returns:
+        str: Extracted text from the PDF
+    """
+    try:
+        text_parts = []
+        with pdfplumber.open(BytesIO(file_content)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+        
+        extracted_text = "\n\n".join(text_parts)
+        return extracted_text.strip()
+    except Exception as e:
+        print(f"Error parsing PDF: {e}")
+        traceback.print_exc()
+        raise
+
+
+def parse_docx(file_content):
+    """
+    Parse .docx file and extract text.
+    
+    Args:
+        file_content: Bytes content of the .docx file
+        
+    Returns:
+        str: Extracted text from the document
+    """
+    try:
+        doc = Document(BytesIO(file_content))
+        text_parts = []
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text_parts.append(paragraph.text)
+        
+        extracted_text = "\n\n".join(text_parts)
+        return extracted_text.strip()
+    except Exception as e:
+        print(f"Error parsing DOCX: {e}")
+        traceback.print_exc()
+        raise
+
+
+def parse_doc(file_content, filename):
+    """
+    Parse .doc file and extract text using antiword (if available).
+    
+    Args:
+        file_content: Bytes content of the .doc file
+        filename: Name of the file (for error messages)
+        
+    Returns:
+        str: Extracted text from the document
+    """
+    try:
+        # Check if antiword is available (system dependency)
+        try:
+            subprocess.run(['antiword', '-v'], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            raise Exception(
+                "antiword is not installed. For .doc file support, please install antiword:\n"
+                "  macOS: brew install antiword\n"
+                "  Linux: sudo apt-get install antiword\n"
+                "  Or convert .doc files to .docx format"
+            )
+        
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.doc') as tmp_file:
+            tmp_file.write(file_content)
+            tmp_path = tmp_file.name
+        
+        try:
+            # Use antiword to extract text
+            result = subprocess.run(
+                ['antiword', tmp_path],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            extracted_text = result.stdout.strip()
+            return extracted_text
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running antiword: {e}")
+        raise Exception(f"Failed to extract text from .doc file: {e.stderr.decode() if e.stderr else str(e)}")
+    except Exception as e:
+        print(f"Error parsing DOC: {e}")
+        traceback.print_exc()
+        raise
+
+
+@app.route('/parse-pdf', methods=['POST'])
+def parse_pdf_endpoint():
+    """
+    Endpoint to upload and parse a PDF, DOC, or DOCX file.
+    The extracted text is stored in PARSED_PDF_TEXT dictionary.
+    
+    Returns:
+        JSON response with success status and filename
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+        
+        filename_lower = file.filename.lower()
+        
+        # Check file type
+        if not (filename_lower.endswith('.pdf') or 
+                filename_lower.endswith('.doc') or 
+                filename_lower.endswith('.docx')):
+            return jsonify({"error": "File must be a PDF, DOC, or DOCX"}), 400
+        
+        # Read file content
+        file_content = file.read()
+        
+        # Parse based on file type
+        if filename_lower.endswith('.pdf'):
+            extracted_text = parse_pdf(file_content)
+            file_type = "PDF"
+        elif filename_lower.endswith('.docx'):
+            extracted_text = parse_docx(file_content)
+            file_type = "DOCX"
+        elif filename_lower.endswith('.doc'):
+            extracted_text = parse_doc(file_content, file.filename)
+            file_type = "DOC"
+        else:
+            return jsonify({"error": "Unsupported file type"}), 400
+        
+        # Store the parsed text in the global dictionary
+        # Key: filename, Value: extracted text
+        PARSED_PDF_TEXT[file.filename] = extracted_text
+        
+        print(f"Successfully parsed {file_type}: {file.filename}")
+        print(f"Extracted {len(extracted_text)} characters")
+        
+        return jsonify({
+            "success": True,
+            "filename": file.filename,
+            "file_type": file_type,
+            "text_length": len(extracted_text),
+            "message": f"{file_type} parsed successfully. Text stored in PARSED_PDF_TEXT['{file.filename}']"
+        })
+        
+    except Exception as e:
+        print(f"Error in /parse-pdf endpoint: {e}")
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to parse file: {str(e)}"}), 500
+
+
+def generate_review(prompt, selected_characteristics, characteristic_intensities,
+                    age_min=None, age_max=None, gender=None, location=None, pdf_text=None):
+    """
+    Generate single review using Gemini API.
+    
+    Args:
+        prompt: The product idea text
+        selected_characteristics: List of persona characteristics
+        characteristic_intensities: Dictionary of characteristic intensities
+        age_min: Minimum age
+        age_max: Maximum age
+        gender: Gender filter
+        location: Location filter
+        pdf_text: Optional PDF text to include in the prompt
+                  You can also access PARSED_PDF_TEXT dictionary directly:
+                  e.g., pdf_text = PARSED_PDF_TEXT.get('filename.pdf', '')
+    """
+    if not GEMINI_API_KEY:
         return None, "Gemini API key not configured"
     if not selected_characteristics:
         return None, "No characteristics selected"
+    
+    # TODO: To use parsed PDF text, you can access it from PARSED_PDF_TEXT dictionary
+    # Example: pdf_text = PARSED_PDF_TEXT.get('your_file.pdf', '')
+    # Then include it in your prompt below
 
-    intensity_labels = {0.9: "somewhat", 1.0: "moderately", 1.1: "very"}
-    personality_parts = []
+    intensity_descriptions = {0.9: "somewhat", 1.0: "moderately", 1.1: "very"}
+
+    # Describe personality
+    parts = []
     for char in selected_characteristics:
         intensity_value = characteristic_intensities.get(char, 1.0)
         personality_parts.append(f"{intensity_labels.get(intensity_value, 'moderately')} {char}")
@@ -85,13 +267,18 @@ def generate_review(  # pylint: disable=too-many-arguments
     if location:
         context_parts.append(f"from {location}")
 
-    reviewer_context = f"a potential customer who is {personality}"
-    if context_parts:
-        reviewer_context += f", {', '.join(context_parts)}"
+    if context:
+        reviewer_context = f"a potential customer who is {personality}, {', '.join(context)}"
+    else:
+        reviewer_context = f"a potential customer who is {personality}"
+    
+    pdf_text = PARSED_PDF_TEXT.get('your_file.pdf', '') if PARSED_PDF_TEXT else ''
 
     gemini_prompt = f"""
 You are a potential customer responding to a product idea.
 The product concept is: {prompt}
+
+{f"Additional context from attached document:\n{pdf_text}\n" if pdf_text else ""}
 
 You are {reviewer_context}.
 
@@ -141,10 +328,13 @@ def generate():
         num_reviews = max(1, min(20, int(data.get("numReviews", 5))))
 
         selected_characteristics = data.get("characteristics", [])
-        age_min = data.get("ageMin")
-        age_max = data.get("ageMax")
-        gender = data.get("gender")
-        location = data.get("location")
+        age_min, age_max = data.get("ageMin"), data.get("ageMax")
+        gender, location = data.get("gender"), data.get("location")
+        
+        # TODO: Access parsed PDF text from PARSED_PDF_TEXT dictionary
+        # Example: Get the most recently uploaded PDF or a specific filename
+        # pdf_text = PARSED_PDF_TEXT.get('your_file.pdf', '') if PARSED_PDF_TEXT else ''
+        # You can then pass pdf_text to generate_review() or include it in the prompt
 
         if not text:
             return jsonify({"error": "Please enter a product idea!"}), 400
