@@ -6,6 +6,7 @@
   <title>NeuralFeedback - AI Persona Feedback</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Space+Grotesk:wght@400;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/callPopup.css') }}" />
 </head>
 
 <body class="neural-bg">
@@ -115,7 +116,8 @@
       <div id="feedbackSummarySection" class="feedback-summary-section hidden"></div>
 
     </section>
-  
+
+    <script src="{{ url_for('static', filename='callPopup.js') }}"></script>
     <script src="{{ url_for('static', filename='scripts.js') }}"></script>
   </body>
   </html>

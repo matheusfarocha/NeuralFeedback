@@ -30,21 +30,53 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     Document = None  # type: ignore[assignment]
 
+try:
+    from elevenlabs.client import ElevenLabs  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - optional dependency
+    ElevenLabs = None  # type: ignore[assignment]
+
+try:
+    from openai import OpenAI  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - optional dependency
+    OpenAI = None  # type: ignore[assignment]
+
 # Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret")
 
-# Load Gemini API key from environment variables
+# Load API keys from environment variables
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ELEVEN_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Configure Gemini API when available
 if genai and GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
+# Configure ElevenLabs client
+elevenlabs_client = ElevenLabs(api_key=ELEVEN_API_KEY) if (ELEVEN_API_KEY and ElevenLabs) else None
+
+# Configure OpenAI client
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if (OPENAI_API_KEY and OpenAI) else None
+
+# Voice configuration for ElevenLabs
+VOICE_DEFAULT = (
+    os.getenv("ELEVENLABS_VOICE_ID_DEFAULT")
+    or os.getenv("ELEVENLABS_VOICE_ID")
+    or os.getenv("ELEVENLABS_VOICE_ID_NEUTRAL")
+)
+VOICE_MALE = os.getenv("ELEVENLABS_VOICE_ID_MALE")
+VOICE_FEMALE = os.getenv("ELEVENLABS_VOICE_ID_FEMALE")
+VOICE_NONBINARY = os.getenv("ELEVENLABS_VOICE_ID_NONBINARY") or os.getenv("ELEVENLABS_VOICE_ID_NEUTRAL")
+
+CALL_HISTORY_LIMIT = 6
+
 print(f"genai loaded: {genai is not None}")
 print(f"GEMINI_API_KEY present: {bool(GEMINI_API_KEY)}")
+print(f"ElevenLabs client loaded: {elevenlabs_client is not None}")
+print(f"OpenAI client loaded: {openai_client is not None}")
 
 # Intensity levels
 INTENSITY_LEVELS = [0.9, 1.0, 1.1]
@@ -198,15 +230,22 @@ def generate_review(  # pylint: disable=too-many-arguments
     age_min_val = parse_int(age_min)
     age_max_val = parse_int(age_max)
 
-    persona_constraints = []
+    # Generate a specific random age for this persona
+    generated_age = None
     if age_min_val is not None and age_max_val is not None:
         if age_min_val > age_max_val:
             age_min_val, age_max_val = age_max_val, age_min_val
-        persona_constraints.append(f"Age between {age_min_val} and {age_max_val}")
+        generated_age = random.randint(age_min_val, age_max_val)
     elif age_min_val is not None:
-        persona_constraints.append(f"Age {age_min_val} or older")
+        generated_age = random.randint(age_min_val, 100)
     elif age_max_val is not None:
-        persona_constraints.append(f"Age {age_max_val} or younger")
+        generated_age = random.randint(18, age_max_val)
+    else:
+        generated_age = random.randint(22, 65)
+
+    persona_constraints = []
+    if generated_age:
+        persona_constraints.append(f"Age: exactly {generated_age} years old")
 
     if gender:
         persona_constraints.append(f"Gender: {gender}")
@@ -248,9 +287,9 @@ Return ONLY valid JSON (no code fences) with this structure:
 """
 
     gemini_prompt = f"""
-You are crafting a realistic customer persona and their feedback about a product concept.
+You are crafting a realistic customer persona and their feedback about a product IDEA/CONCEPT being pitched.
 
-Product Concept:
+Product Concept Being Pitched:
 \"\"\"{prompt}\"\"\"
 
 Primary persona traits to embody:
@@ -260,7 +299,14 @@ Persona constraints and user-supplied demographic preferences:
 {constraints_text}
 {document_context}
 
-Use every piece of provided information. The review must reference specifics from the product concept and any supporting document snippets when available.
+IMPORTANT: The persona is evaluating this CONCEPT/IDEA based on the description provided. They have NOT used the product (it doesn't exist yet). They should:
+- Give feedback on the idea itself and its potential
+- Share their thoughts on whether this would appeal to them or solve a problem they have
+- Raise any concerns, questions, or suggestions about the concept
+- NOT pretend they have used, seen, or experienced the product
+- NOT hallucinate features or experiences beyond what's described
+
+The review must reference specifics from the product concept description and evaluate its viability from the persona's perspective.
 
 {instruction_schema}
 Fill in missing demographic fields with plausible details that still align with the constraints and traits. Keep the JSON concise, valid, and free of additional commentary.
@@ -278,6 +324,11 @@ Fill in missing demographic fields with plausible details that still align with 
         first_name = random.choice(FIRST_NAMES)
         last_name = random.choice(LAST_NAMES)
         persona_name = f"{first_name} {last_name}"
+
+        # Add age to name if available
+        if generated_age:
+            persona_name = f"{persona_name}, {generated_age}"
+
         descriptor = f"{personality_summary} customer persona".strip().capitalize()
 
         # Package review with metadata about the persona
@@ -289,7 +340,7 @@ Fill in missing demographic fields with plausible details that still align with 
             "sentiment_rating": rating,
             "personality_description": descriptor,
             "age_range": f"{age_min_val}-{age_max_val}" if age_min_val is not None and age_max_val is not None else None,
-            "age": None,
+            "age": generated_age,
             "gender": gender or None,
             "location": location or None,
             "tone": None,
@@ -300,7 +351,7 @@ Fill in missing demographic fields with plausible details that still align with 
         return review_text, metadata
 
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
         response = model.generate_content(gemini_prompt)
         raw_output = (response.text or "").strip()
 
@@ -337,7 +388,13 @@ Fill in missing demographic fields with plausible details that still align with 
         if not persona_name:
             persona_name = f"{random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
 
-        persona_age = parse_int(persona_info.get("age"))
+        # Use our pre-generated random age for consistency, fallback to Gemini's age if not available
+        persona_age = generated_age if generated_age else parse_int(persona_info.get("age"))
+
+        # Add age to persona name if available
+        if persona_age:
+            persona_name = f"{persona_name}, {persona_age}"
+
         persona_gender = (persona_info.get("gender") or gender or "").strip() or None
         persona_location = (persona_info.get("location") or location or "").strip() or None
         persona_profession = (persona_info.get("profession") or "").strip() or None
@@ -466,7 +523,7 @@ Keep each point concise (one sentence or short phrase). Focus on the most common
 """
 
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
         response = model.generate_content(gemini_prompt)
         summary_text = (response.text or "").strip()
 
@@ -841,6 +898,173 @@ User: {user_msg}
 
 
 # ============================================================
+# VOICE CALL FUNCTIONALITY (ELEVENLABS)
+# ============================================================
+
+def _resolve_voice_id(gender_hint):
+    """Resolve which ElevenLabs voice ID to use based on gender."""
+    gender = (gender_hint or "").strip().lower()
+    if gender in {"male", "man"} and VOICE_MALE:
+        return VOICE_MALE
+    if gender in {"female", "woman"} and VOICE_FEMALE:
+        return VOICE_FEMALE
+    if gender in {"non-binary", "nonbinary", "non binary", "nb"} and VOICE_NONBINARY:
+        return VOICE_NONBINARY
+    return VOICE_DEFAULT or VOICE_MALE or VOICE_FEMALE or VOICE_NONBINARY
+
+
+def _build_system_prompt(persona_name, persona_descriptor, review_summary, persona_tone):
+    """Build the system prompt for voice call conversation."""
+    descriptor_line = persona_descriptor or persona_tone or "insightful customer persona"
+    review_snippet = review_summary.strip() or "No previous review context provided."
+    return (
+        f"You are {persona_name}, an {descriptor_line}. "
+        f"Stay in character, respond conversationally, and keep answers concise but opinionated. "
+        f"Reference this earlier feedback when useful:\n\"{review_snippet}\""
+    )
+
+
+def _format_history(history):
+    """Format conversation history for the prompt."""
+    lines = []
+    for turn in history[-CALL_HISTORY_LIMIT:]:
+        role = turn.get("role", "")
+        content = turn.get("content", "")
+        if not content:
+            continue
+        if role == "assistant":
+            lines.append(f"Persona: {content}")
+        else:
+            lines.append(f"User: {content}")
+    return "\n".join(lines)
+
+
+@app.route("/api/call/<int:persona_id>", methods=["POST"])
+def call_persona(persona_id):
+    """
+    Handle voice call with a persona using ElevenLabs text-to-speech.
+
+    Accepts user speech input, generates AI response, converts to speech,
+    and returns both text and audio (base64 encoded).
+    """
+    try:
+        if elevenlabs_client is None:
+            return jsonify({"error": "ElevenLabs client unavailable. Set ELEVENLABS_API_KEY."}), 503
+
+        payload = request.get_json(force=True)
+        initial_greeting = bool(payload.get("initial"))
+        user_text = (payload.get("message") or "").strip()
+
+        persona_name = payload.get("persona_name")
+        persona_tone = payload.get("tone") or "friendly and natural"
+        persona_gender = payload.get("gender")
+
+        personas = session.get("personas", [])
+        persona = next((p for p in personas if p.get("id") == persona_id), None)
+        metadata = persona.get("metadata", {}) if persona else {}
+
+        persona_name = persona_name or metadata.get("persona_name") or f"Persona {persona_id}"
+        persona_descriptor = metadata.get("persona_descriptor") or metadata.get("personality_description", "")
+        review_summary = persona.get("review", "") if persona else ""
+
+        history_key = f"call_history_{persona_id}"
+        history = session.get(history_key, [])
+        if isinstance(payload.get("history"), list):
+            history = payload["history"][-CALL_HISTORY_LIMIT:]
+
+        system_prompt = _build_system_prompt(persona_name, persona_descriptor, review_summary, persona_tone)
+        conversation_transcript = _format_history(history)
+
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"Conversation so far:\n{conversation_transcript}\n\n"
+            f"User: {user_text or 'Start conversation'}\n"
+            f"{persona_name}:"
+        )
+
+        reply_text = ""
+
+        # Try Gemini first
+        if genai and GEMINI_API_KEY:
+            try:
+                model = genai.GenerativeModel("gemini-2.0-flash-exp")
+                response = model.generate_content(prompt)
+                candidate = (response.text or "").strip()
+                if candidate:
+                    reply_text = candidate
+                else:
+                    raise ValueError("Empty Gemini response")
+            except Exception as exc:
+                print("⚠️ Gemini error:", exc)
+                traceback.print_exc()
+
+        # Fallback to OpenAI
+        if (not reply_text or "offline" in reply_text.lower()) and openai_client:
+            try:
+                oai_resp = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_text or "Start conversation"},
+                    ],
+                    max_tokens=150,
+                )
+                reply_text = oai_resp.choices[0].message.content.strip()
+            except Exception as e:
+                print("🔥 OpenAI fallback failed:", e)
+                reply_text = "Let's keep discussing your idea — tell me more!"
+
+        # ElevenLabs voice output
+        voice_id = _resolve_voice_id(persona_gender)
+        if not voice_id:
+            return jsonify({"error": "No ElevenLabs voice configured for this persona."}), 500
+
+        # Ensure we always have something to say
+        if not reply_text:
+            reply_text = "Hey, let's continue — what's your product idea?"
+
+        speech_text = (
+            f"Hey, I'm {persona_name}. I gave feedback on your project earlier — how may I help you today?"
+            if initial_greeting
+            else reply_text
+        )
+
+        speech_prompt = f"Speak in a {persona_tone} tone: {speech_text}"
+
+        speech_result = elevenlabs_client.text_to_speech.convert(
+            voice_id=voice_id,
+            text=speech_prompt,
+            model_id="eleven_multilingual_v2",
+        )
+
+        audio_bytes = (
+            speech_result
+            if isinstance(speech_result, (bytes, bytearray))
+            else b"".join(chunk for chunk in speech_result if isinstance(chunk, (bytes, bytearray)))
+        )
+
+        if not audio_bytes:
+            return jsonify({"error": "Failed to generate ElevenLabs audio."}), 500
+
+        # Update session history
+        if initial_greeting:
+            history.append({"role": "assistant", "content": reply_text})
+        else:
+            history.append({"role": "user", "content": user_text})
+            history.append({"role": "assistant", "content": reply_text})
+        session[history_key] = history[-CALL_HISTORY_LIMIT * 2:]
+        session.modified = True
+
+        import base64
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return jsonify({"reply": reply_text, "audio": audio_base64})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
 # FALLBACK SYSTEM
 # ============================================================
 
@@ -892,20 +1116,24 @@ def build_fallback_personas(text, num_reviewers, selected_characteristics):
         # Generate random name for fallback persona
         first_name = random.choice(FIRST_NAMES)
         last_name = random.choice(LAST_NAMES)
-        persona_name = f"{first_name} {last_name}"
+        # Generate random age between 22 and 65
+        persona_age = random.randint(22, 65)
+        persona_name = f"{first_name} {last_name}, {persona_age}"
 
         # Vary ratings slightly (6-8 out of 10)
         rating = 6 + (idx % 3)
 
         # Build fallback review with generic but helpful feedback
+        review_text = (
+            f"As a {template['persona_descriptor'].lower()}, I've considered \"{snippet}\". "
+            "It shows promise, but clarifying the value proposition and next validation steps would help."
+        )
+
         reviews.append(
             {
                 "id": idx + 1,
                 "index": idx + 1,
-                "review": (
-                    f"As a {template['persona_descriptor'].lower()}, I've considered \"{snippet}\". "
-                    "It shows promise, but clarifying the value proposition and next validation steps would help."
-                ),
+                "review": review_text,
                 "metadata": {
                     "persona_name": persona_name,
                     "persona_descriptor": template["persona_descriptor"],

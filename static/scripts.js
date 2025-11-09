@@ -457,7 +457,7 @@
       </div>
       <p class="persona-feedback">${escapeHtml(review.review || "")}</p>
       <div class="persona-actions">
-        <button class="feedback-card-btn btn-secondary-outline" type="button">
+        <button class="feedback-card-btn btn-secondary-outline call-trigger" type="button">
           <span>📞</span> Start Call
         </button>
         <a class="feedback-card-btn" href="/chat/${personaId}">
@@ -466,7 +466,26 @@
       </div>
     `;
 
-    el.querySelector(".btn-secondary-outline")?.addEventListener("click", () => startCall(name));
+    const callButton = el.querySelector(".call-trigger");
+    if (callButton) {
+      const tone = metadata.tone || metadata.persona_tone || "friendly";
+      const gender = metadata.gender || "";
+      const descriptor = metadata.persona_descriptor || metadata.personality_description || "";
+      const reviewText = review.review || "";
+      const personaPayload = {
+        id: personaId,
+        name,
+        tone,
+        gender,
+        descriptor,
+        review: reviewText,
+      };
+      if (typeof window.openCallPopup === "function") {
+        callButton.addEventListener("click", () => window.openCallPopup(personaPayload));
+      } else {
+        callButton.addEventListener("click", () => alert(`Voice calling requires ElevenLabs API key. Call ${name} via text chat instead.`));
+      }
+    }
     return el;
   }
 
