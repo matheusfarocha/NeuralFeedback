@@ -179,10 +179,7 @@ add a rating between 1 and 10 formatted exactly as: RATING: X
         # Generate random name for persona
         first_name = random.choice(FIRST_NAMES)
         last_name = random.choice(LAST_NAMES)
-        if generated_age:
-            persona_name = f"{first_name} {last_name}, {generated_age}"
-        else:
-            persona_name = f"{first_name} {last_name}"
+        persona_name = f"{first_name} {last_name}"
 
         # Package review with metadata about the persona
         metadata = {
