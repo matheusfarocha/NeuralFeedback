@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Feedback Overview • NeuralFeedback</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="bg-gradient-dark min-h-screen">
+    <div class="feedback-wrapper">
+        <header class="feedback-header animate-fade-in">
+            <div>
+                <p class="eyebrow">Persona Insights</p>
+                <h1 class="title-large">Customer Feedback Overview</h1>
+            </div>
+            <a class="btn-secondary" href="{{ url_for('home') }}">← Back to Idea Input</a>
+        </header>
+
+        <section class="feedback-grid">
+            {% for reviewer in reviewers %}
+            <article class="persona-card animate-rise" data-reviewer-id="{{ reviewer.id }}">
+                <div class="persona-card__glow"></div>
+                <header class="persona-card__header">
+                    <div class="persona-avatar">{{ reviewer.name[0] }}</div>
+                    <div>
+                        <h2 class="persona-name">{{ reviewer.name }}</h2>
+                        <p class="persona-meta">
+                            {{ reviewer.age }} • {{ reviewer.profession }}
+                        </p>
+                    </div>
+                </header>
+
+                <div class="persona-tags">
+                    <span class="persona-tag">{{ reviewer.gender or 'Unspecified' }}</span>
+                    <span class="persona-tag tone-{{ reviewer.tone|lower }}">{{ reviewer.tone }}</span>
+                </div>
+
+                <div class="persona-rating" aria-label="Sentiment rating">
+                    {% set rating = reviewer.stars if reviewer.stars is defined else 3 %}
+                    {% for i in range(5) %}
+                        {% if i < rating %}
+                        <svg class="star-icon star-filled" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
+                        </svg>
+                        {% else %}
+                        <svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
+                        </svg>
+                        {% endif %}
+                    {% endfor %}
+                    <span class="rating-value">{{ rating }}/5</span>
+                </div>
+
+                <p class="persona-feedback">{{ reviewer.feedback }}</p>
+
+                <footer class="persona-card__footer">
+                    <a class="btn-primary w-full justify-center inline-flex items-center gap-2" href="{{ url_for('chat', reviewer_id=reviewer.id) }}">
+                        <span>View Chat</span>
+                        <span aria-hidden="true">→</span>
+                    </a>
+                </footer>
+            </article>
+            {% endfor %}
+        </section>
+    </div>
+
+    <script src="{{ url_for('static', filename='scripts.js') }}"></script>
+</body>
+</html>
+

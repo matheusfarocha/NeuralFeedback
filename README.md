@@ -1,12 +1,14 @@
 # NeuralFeedback
 
-A Flask web application for generating reviews with customizable parameters.
+A Flask web application that generates persona-based reviewer feedback using the NeuralSeek API, with optional Gemini summarization for chat insights.
 
 ## Features
 
-- Text input for review content
-- Slider control for number of reviews (1-20)
-- Modern, responsive UI with black theme
+- Text area for describing a product or idea
+- Slider to choose how many reviewers to generate (1-10)
+- Persona-driven reviewer cards with tone, rating, and feedback
+- Live chat per reviewer with automatic feedback summarization
+- Glassmorphism-inspired dark UI styling responsive across devices
 
 ## Setup
 
@@ -15,43 +17,36 @@ A Flask web application for generating reviews with customizable parameters.
 pip install -r requirements.txt
 ```
 
-2. Set up environment variables:
-   - Create a `.env` file in the root directory
-   - Add your API keys to the `.env` file:
+2. Configure environment variables (create a `.env` file in the project root):
    ```
-   API_KEY=your_api_key_here
-   OPENAI_API_KEY=your_openai_api_key_here
+   NEURALSEEK_API_KEY=your_neuralseek_api_key
+   FLASK_SECRET_KEY=choose_a_secure_secret
+   # Optional: enable Gemini-powered feedback summaries
+   GEMINI_API_KEY=your_gemini_api_key
    ```
-   - **Never commit the `.env` file to version control** (it's already in `.gitignore`)
+   > The `.env` file is already ignored by Git—never commit secrets.
 
-3. Run the Flask application:
+3. Start the Flask development server:
 ```bash
 python app.py
 ```
 
-4. Open your browser and navigate to:
+4. Open the app in your browser:
 ```
 http://localhost:5000
 ```
 
 ## Usage
 
-1. Enter text in the text input field
-2. Adjust the number of reviews using the slider
-3. Click "Generate" to process your request
+1. Describe your product idea in the text area.
+2. Choose how many reviewer personas you want.
+3. Submit the form to generate feedback cards.
+4. Click a reviewer to open a chat, ask follow-up questions, and apply summarized feedback.
 
 ## Environment Variables
 
-The application uses environment variables for API keys. Create a `.env` file in the root directory with your API keys:
+- `NEURALSEEK_API_KEY` (required): enables NeuralSeek reviewer generation and chat responses.
+- `GEMINI_API_KEY` (optional): enables chat feedback summarization via Google Gemini.
+- `FLASK_SECRET_KEY` (required): secures Flask sessions used for storing feedback state.
 
-```
-API_KEY=your_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-Access these in your code using:
-```python
-import os
-api_key = os.getenv('API_KEY')
-```
-
+Gemini keys can be created on [Google AI Studio](https://makersuite.google.com/app/apikey); NeuralSeek keys are available from the NeuralSeek dashboard.

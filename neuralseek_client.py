@@ -268,3 +268,9 @@ def create_dummy_reviewer(persona: Dict) -> Dict:
         "feedback": dummy_feedback.get(persona["tone"], dummy_feedback["Moderate"])
     }
 
+
+def generate_reviewers(product_idea: str, num_reviewers: int = 5) -> List[Dict]:
+    """
+    Convenience wrapper to generate reviewers using the NeuralSeek API client.
+    """
+    return generate_reviews(product_idea, num_reviewers=num_reviewers, use_api=True)
