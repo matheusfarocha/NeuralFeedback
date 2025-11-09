@@ -1,97 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat with {{ reviewer.name }} - NeuralFeedback</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ persona_name }} – Feedback Chat</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500&display=swap" rel="stylesheet">
 </head>
-<body class="bg-gradient-dark min-h-screen flex flex-col">
-    <header class="chat-shell-header">
-        <a href="/reviews" class="btn-secondary">← Back to Feedback</a>
-        <div class="chat-persona-summary">
-            <div class="avatar-small">{{ reviewer.name[0] }}</div>
-            <div>
-                <h1 class="persona-name">{{ reviewer.name }}</h1>
-                <p class="persona-info">{{ reviewer.profession }}</p>
-            </div>
+
+<body class="neural-bg" data-persona-id="{{ persona_id }}" data-persona-name="{{ persona_name }}">
+  <div class="bg-animated"></div>
+
+  <div class="chat-wrapper">
+    <header class="chat-header">
+      <div class="chat-title">{{ persona_name }}</div>
+      <div class="chat-subtitle">{{ descriptor }}</div>
+      {% if characteristics %}
+        <div class="chat-tags">
+          {% for trait in characteristics %}
+            <span class="persona-tag">{{ trait }}</span>
+          {% endfor %}
         </div>
+      {% endif %}
     </header>
 
-    <main class="chat-stage">
-        <section class="chat-panel animate-slide-up">
-            <div class="chat-messages" id="chatMessages">
-                <div class="message message-ai">
-                    <div class="message-content">
-                        <p>Hello! I've reviewed your idea. What would you like to know more about?</p>
-                    </div>
-                </div>
-                <div class="message message-user">
-                    <div class="message-content">
-                        <p>What do you think of my idea?</p>
-                    </div>
-                </div>
-                <div class="message message-ai">
-                    <div class="message-content">
-                        <p>I think it's innovative but could use clarity on target market. The core concept is solid, but defining your ideal customer persona would strengthen the value proposition significantly.</p>
-                    </div>
-                </div>
-            </div>
+    <div class="chat-window" id="chatWindow">
+      <div class="chat-message ai-message fade-in">
+        <div class="message-avatar">{{ persona_name[0] }}</div>
+        <div class="message-content">
+          <p class="message-text">
+            Hi! I'm <strong>{{ persona_name }}</strong>, and earlier I shared this review:
+            <br><em>“{{ review_text }}”</em><br><br>
+            What would you like to explore next?
+          </p>
+        </div>
+      </div>
+    </div>
 
-            <form class="chat-input-container" id="chatForm">
-                <input
-                    type="text"
-                    id="messageInput"
-                    class="chat-input"
-                    placeholder="Ask a follow-up question…"
-                    autocomplete="off"
-                >
-                <button type="submit" class="btn-send">Send</button>
-            </form>
-        </section>
+    <form id="chatForm" class="chat-input-section">
+      <input
+        type="text"
+        id="chatInput"
+        placeholder="Ask {{ persona_name }} something about the idea…"
+        autocomplete="off"
+        required
+      />
+      <button type="submit" class="chat-send-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M2.94 2.94a.75.75 0 0 1 .82-.17l13.5 5.5a.75.75 0 0 1 0 1.38l-13.5 5.5a.75.75 0 0 1-1.02-.92l1.77-5.3-1.77-5.3a.75.75 0 0 1 .2-.69zM6.32 10l-.97 2.9L14.42 10 5.35 7.1l.97 2.9z"/>
+        </svg>
+      </button>
+    </form>
+  </div>
 
-        <aside class="feedback-sidebar" id="feedbackSidebar">
-            <div class="feedback-card animate-fade-in">
-                <div class="feedback-card-header">
-                    <p class="eyebrow">Live Summary</p>
-                    <h2>Feedback Dashboard</h2>
-                </div>
-
-                <div class="sentiment-meter" aria-label="Sentiment rating">
-                    <p class="sentiment-label">Current Sentiment</p>
-                    <div class="persona-rating" id="liveSentimentRating" data-rating="3">
-                        {% for i in range(5) %}
-                        <svg class="star-icon{% if i < 3 %} star-filled{% endif %}" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
-                        </svg>
-                        {% endfor %}
-                        <span class="rating-value" id="liveSentimentValue">3/5</span>
-                    </div>
-                </div>
-
-                <div class="feedback-items" id="feedback-dashboard-list">
-                    {% for item in feedback_items %}
-                        <label class="feedback-item" data-item="{{ item }}">
-                            <input type="checkbox" class="feedback-checkbox" data-text="{{ item }}" value="{{ item }}">
-                            <span>{{ item }}</span>
-                        </label>
-                    {% endfor %}
-                </div>
-
-                <button
-                    id="applyButton"
-                    type="button"
-                    class="btn-apply-feedback mt-4"
-                >
-                    Apply Changes
-                </button>
-            </div>
-        </aside>
-    </main>
-
-    <script id="initial-feedback-items" type="application/json">
-        {{ feedback_items | tojson | safe }}
-    </script>
-    <script src="{{ url_for('static', filename='scripts.js') }}"></script>
+  <script src="{{ url_for('static', filename='scripts.js') }}"></script>
 </body>
 </html>
