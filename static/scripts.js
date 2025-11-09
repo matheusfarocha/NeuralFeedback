@@ -282,318 +282,179 @@
     }
   }
 
-  function showDashboard(data) {
-    const overlay = document.getElementById("feedbackOverlay");
-    const cardsContainer = document.getElementById("feedbackCards");
-    const summary = document.getElementById("feedbackSummary");
-    const summarySection = document.getElementById("feedbackSummarySection");
-    const mainWrapper = document.querySelector(".page-wrapper");
-    if (!overlay || !cardsContainer || !summary) return;
 
-    cardsContainer.innerHTML = "";
-    const reviews = Array.isArray(data.reviews) && data.reviews.length ? data.reviews : data.fallback || [];
+    function showFeedbackDashboard(data) {
+        const overlay = document.getElementById('feedbackOverlay');
+        const cardsContainer = document.getElementById('feedbackCards');
+        const summaryEl = document.getElementById('feedbackSummary');
+        const mainWrapper = document.querySelector('.page-wrapper');
 
-    if (reviews.length) {
-      const avg10 = reviews.reduce((sum, review) => sum + (review.metadata?.sentiment_rating || 0), 0) / reviews.length;
-      const avg5 = (avg10 / 2).toFixed(1);
-      summary.textContent = `Generated ${reviews.length} persona responses · Avg sentiment ${avg5}/5`;
-
-      const usedNames = new Set();
-      reviews.forEach(review => {
-        const meta = review.metadata || {};
-        if (!meta.persona_name) {
-          meta.persona_name = pickName(meta.location || "");
+        if (!overlay || !cardsContainer) {
+            return;
         }
-        if (usedNames.has(meta.persona_name)) {
-          let counter = 2;
-          let candidate = `${meta.persona_name} ${counter}`;
-          while (usedNames.has(candidate)) {
-            counter += 1;
-            candidate = `${meta.persona_name} ${counter}`;
-          }
-          meta.persona_name = candidate;
-        }
-        usedNames.add(meta.persona_name);
-        cardsContainer.appendChild(buildPersonaCard(review));
-      });
 
-      // Build and show summary section
-      if (summarySection) {
-        const glows = data.glows || [];
-        const grows = data.grows || [];
-        buildSummarySection(summarySection, reviews, avg10, glows, grows);
-        summarySection.classList.remove("hidden");
-      }
-    } else {
-      summary.textContent = data.message || data.fallbackMessage || "No responses generated. Adjust inputs and retry.";
-      if (summarySection) {
-        summarySection.classList.add("hidden");
-      }
+        cardsContainer.innerHTML = '';
+
+        if (Array.isArray(data.reviews) && data.reviews.length) {
+            if (summaryEl) {
+                if (data.fallbackMessage) {
+                    summaryEl.textContent = data.fallbackMessage;
+                } else {
+                    const total = data.reviews.reduce((acc, review) => acc + (review.metadata?.sentiment_rating || 0), 0);
+                    const average = (total / data.reviews.length).toFixed(1);
+                    summaryEl.textContent = `Generated ${data.reviews.length} persona responses • Avg sentiment ${average}/10`;
+                }
+            }
+
+            data.reviews.forEach(reviewItem => {
+                const rating = reviewItem.metadata?.sentiment_rating || 0;
+                const personaCard = document.createElement('article');
+                personaCard.className = 'persona-card';
+                personaCard.innerHTML = `
+                    <div class="persona-header">
+                        <div class="persona-avatar">${escapeHtml((reviewItem.metadata?.initial || reviewItem.index || 1).toString())}</div>
+                        <div>
+                            <h3 class="persona-name">${escapeHtml(reviewItem.metadata?.persona_name || `Persona #${reviewItem.index || 1}`)}</h3>
+                            <p class="persona-meta">${escapeHtml(reviewItem.metadata?.persona_descriptor || reviewItem.metadata?.personality_description || 'Customer Persona')}</p>
+                        </div>
+                    </div>
+                    <div class="persona-tags">
+                        ${(reviewItem.metadata?.characteristics || []).map(char => `<span class="persona-tag">${escapeHtml(char)}</span>`).join('')}
+                    </div>
+                    <div class="persona-rating" aria-label="Sentiment rating">
+                        ${Array.from({ length: 5 }).map((_, i) => `
+                            <svg class="star-icon${i < rating ? ' star-filled' : ''}" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
+                            </svg>
+                        `).join('')}
+                        <span class="rating-value">${rating}/5</span>
+                    </div>
+                    <p class="persona-feedback">${escapeHtml(reviewItem.review || '')}</p>
+                    <div class="persona-actions">
+                        <a class="feedback-card-btn" href="#" onclick="return false;">View Chat (coming soon)</a>
+                    </div>
+                `;
+                cardsContainer.appendChild(personaCard);
+            });
+        } else if (summaryEl) {
+            summaryEl.textContent = data.fallbackMessage || 'We could not generate persona responses. Please adjust your input and try again.';
+        }
+
+        overlay.classList.remove('hidden');
+        if (mainWrapper) {
+            mainWrapper.classList.add('hidden');
+        }
+
+        const restartBtn = document.getElementById('feedbackRestartButton');
+        if (restartBtn) {
+            restartBtn.addEventListener('click', () => {
+                overlay.classList.add('hidden');
+                if (mainWrapper) {
+                    mainWrapper.classList.remove('hidden');
+                }
+            }, { once: true });
+        }
     }
 
-    overlay.classList.remove("hidden");
-    mainWrapper?.classList.add("hidden");
-  }
-
-  function buildSummarySection(container, reviews, avgRating10, glows = [], grows = []) {
-    const avgRating5 = (avgRating10 / 2).toFixed(1);
-    const filledStars = Math.round(avgRating10 / 2);
-    const hasHalfStar = (avgRating10 / 2) % 1 >= 0.5 && filledStars < 5;
-    const gradientId = `halfGradient-${Date.now()}`;
-
-    const starsHtml = Array.from({ length: 5 }).map((_, i) => {
-      if (i < filledStars) {
-        return `<svg class="summary-star summary-star-filled" viewBox="0 0 24 24">
-          <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
-        </svg>`;
-      } else if (i === filledStars && hasHalfStar) {
-        return `<svg class="summary-star summary-star-half" viewBox="0 0 24 24">
-          <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z" fill="url(#${gradientId})"/>
-        </svg>`;
-      } else {
-        return `<svg class="summary-star" viewBox="0 0 24 24">
-          <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
-        </svg>`;
-      }
-    }).join("");
-
-    // Use provided glows/grows or fallback to placeholder text
-    const glowsList = glows.length > 0 
-      ? glows.map(glow => `<li>${escapeHtml(glow)}</li>`).join("")
-      : `<li>Strong value proposition that addresses a clear market need</li>
-         <li>Innovative approach to solving the problem</li>
-         <li>Well-defined target audience and use cases</li>
-         <li>Potential for scalability and growth</li>`;
-
-    const growsList = grows.length > 0
-      ? grows.map(grow => `<li>${escapeHtml(grow)}</li>`).join("")
-      : `<li>Consider refining the user experience and onboarding flow</li>
-         <li>Clarify the monetization strategy and pricing model</li>
-         <li>Address potential technical challenges and scalability concerns</li>
-         <li>Develop a more comprehensive go-to-market strategy</li>`;
-
-    container.innerHTML = `
-      <svg style="position: absolute; width: 0; height: 0;">
-        <defs>
-          <linearGradient id="${gradientId}">
-            <stop offset="50%" stop-color="#facc15"/>
-            <stop offset="50%" stop-color="rgba(55, 65, 81, 0.7)"/>
-          </linearGradient>
-        </defs>
-      </svg>
-      <div class="summary-header">
-        <h3 class="summary-title">Overall Feedback Summary</h3>
-        <div class="summary-rating-display">
-          <div class="summary-stars">
-            ${starsHtml}
-          </div>
-          <div class="summary-rating-value">${avgRating5}/5</div>
-        </div>
-      </div>
-      <div class="summary-content">
-        <div class="summary-column summary-glows">
-          <div class="summary-column-header">
-            <div class="summary-icon summary-icon-glow">✨</div>
-            <h4 class="summary-column-title">Glows</h4>
-          </div>
-          <div class="summary-column-content">
-            <ul class="summary-list">
-              ${glowsList}
-            </ul>
-          </div>
-        </div>
-        <div class="summary-column summary-grows">
-          <div class="summary-column-header">
-            <div class="summary-icon summary-icon-grow">🌱</div>
-            <h4 class="summary-column-title">Grows</h4>
-          </div>
-          <div class="summary-column-content">
-            <ul class="summary-list">
-              ${growsList}
-            </ul>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  function hideOverlay() {
-    document.getElementById("feedbackOverlay")?.classList.add("hidden");
-    document.querySelector(".page-wrapper")?.classList.remove("hidden");
-  }
-
-  function buildPersonaCard(review) {
-    const metadata = review.metadata || {};
-    const personaId = review.id ?? review.index ?? 0;
-    const name = metadata.persona_name || pickName(metadata.location || "");
-    const descriptor = metadata.persona_descriptor || metadata.personality_description || "Customer Persona";
-    const rating10 = metadata.sentiment_rating || 0;
-    const ratingLabel = (rating10 / 2).toFixed(1);
-    const traits = metadata.characteristics || [];
-
-    const el = document.createElement("article");
-    el.className = "persona-card";
-    el.innerHTML = `
-      <div class="persona-header">
-        <div class="persona-avatar">${escapeHtml(name.charAt(0))}</div>
-        <div>
-          <h3 class="persona-name">${escapeHtml(name)}</h3>
-          <p class="persona-meta">${escapeHtml(descriptor)}</p>
-        </div>
-      </div>
-      <div class="persona-tags">
-        ${traits.map(trait => `<span class="persona-tag">${escapeHtml(trait)}</span>`).join("")}
-      </div>
-      <div class="persona-rating">
-        ${Array.from({ length: 5 }).map((_, i) => {
-          const filled = i < Math.round(rating10 / 2);
-          return `
-            <svg class="star-icon${filled ? " star-filled" : ""}" viewBox="0 0 24 24">
-              <path d="m12 3 2.4 5.8 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"/>
-            </svg>
-          `;
-        }).join("")}
-        <span class="rating-value">${ratingLabel}/5</span>
-      </div>
-      <p class="persona-feedback">${escapeHtml(review.review || "")}</p>
-      <div class="persona-actions">
-        <button class="feedback-card-btn btn-secondary-outline" type="button">
-          <span>📞</span> Start Call
-        </button>
-        <a class="feedback-card-btn" href="/chat/${personaId}">
-          <span>💬</span> Open Chat
-        </a>
-      </div>
-    `;
-
-    el.querySelector(".btn-secondary-outline")?.addEventListener("click", () => startCall(name));
-    return el;
-  }
-
-  function pickName(region) {
-    const fallback = NAME_POOLS.default;
-    const normalizedRegion = region || "";
-    const directPool = NAME_POOLS[normalizedRegion];
-    if (directPool) {
-      return directPool[Math.floor(Math.random() * directPool.length)];
+    function showError(message) {
+        const errorDiv = document.getElementById('error');
+        if (!errorDiv) return;
+        errorDiv.textContent = message;
+        errorDiv.classList.add('show');
     }
-    const partialKey = Object.keys(NAME_POOLS).find(key => key !== "default" && normalizedRegion.includes(key));
-    const pool = partialKey ? NAME_POOLS[partialKey] : fallback;
-    return pool[Math.floor(Math.random() * pool.length)];
-  }
 
-  function setupChatPage() {
-    const chatWindow = document.getElementById("chatWindow");
-    const chatForm = document.getElementById("chatForm");
-    const chatInput = document.getElementById("chatInput");
-    const personaId = document.body?.dataset.personaId;
-    const personaName = document.body?.dataset.personaName;
+    function clearError() {
+        const errorDiv = document.getElementById('error');
+        if (!errorDiv) return;
+        errorDiv.textContent = '';
+        errorDiv.classList.remove('show');
+    }
 
-    if (!chatWindow || !chatForm || !chatInput || !personaId || !personaName) return;
+    function showMetadata(reviewItem) {
+        const modal = document.getElementById('metadataModal');
+        const modalBody = document.getElementById('modalBody');
+        if (!modal || !modalBody) return;
 
-    chatForm.addEventListener("submit", async event => {
-      event.preventDefault();
-      const text = chatInput.value.trim();
-      if (!text) return;
+        const metadata = reviewItem.metadata || {};
+        let content = `
+            <div class="review-full-text">
+                <div class="metadata-label">Customer Feedback</div>
+                <div>${escapeHtml(reviewItem.review || '')}</div>
+            </div>
+        `;
 
-      appendUserMessage(chatWindow, text);
-      chatInput.value = "";
+        if (metadata.personality_description) {
+            content += createMetadataBlock('Persona Profile', metadata.personality_description);
+        }
 
-      const typingBubble = createTypingBubble(personaName);
-      chatWindow.appendChild(typingBubble);
-      chatWindow.scrollTop = chatWindow.scrollHeight;
+        if (metadata.sentiment_rating !== undefined) {
+            const sentimentLabel =
+                metadata.sentiment_rating >= 8 ? '(Positive)' : metadata.sentiment_rating >= 4 ? '(Neutral)' : '(Negative)';
+            content += createMetadataBlock(
+                'Sentiment Rating',
+                `${metadata.sentiment_rating}/10 ${sentimentLabel}`
+            );
+        }
 
-      try {
-        const res = await fetch(`/api/chat/${personaId}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({ message: text }),
-        });
+        if (Array.isArray(metadata.characteristics)) {
+            const traits = metadata.characteristics
+                .map(char => {
+                    const intensity = metadata.characteristic_intensities?.[char] || 1;
+                    return `<div class="metadata-chip"><strong>${escapeHtml(char)}</strong>: ${Math.round(intensity * 100)}%</div>`;
+                })
+                .join('');
+            content += `
+                <div class="metadata-item">
+                    <div class="metadata-label">Characteristics</div>
+                    <div class="metadata-value">${traits}</div>
+                </div>
+            `;
+        }
 
-        const data = await res.json();
-        typingBubble.remove();
+        if (metadata.age_range) {
+            content += createMetadataBlock('Age Range', metadata.age_range);
+        }
 
-        if (res.ok) {
-          appendAiMessage(chatWindow, personaName, data.reply || "I'm reflecting on that — could you clarify a bit more?");
+        if (metadata.gender) {
+            content += createMetadataBlock('Gender', metadata.gender);
+        }
+
+        if (metadata.location) {
+            content += createMetadataBlock('Location', metadata.location);
+        }
+
+        modalBody.innerHTML = content;
+        modal.classList.add('show');
+    }
+
+    function createMetadataBlock(label, value) {
+        return `
+            <div class="metadata-item">
+                <div class="metadata-label">${escapeHtml(label)}</div>
+                <div class="metadata-value">${escapeHtml(value)}</div>
+            </div>
+        `;
+    }
+
+    function closeModal() {
+        const modal = document.getElementById('metadataModal');
+        if (!modal) return;
+        modal.classList.remove('show');
+    }
+
+    function toggleCharacteristic(button) {
+        if (!button) return;
+        const characteristic = button.getAttribute('data-characteristic');
+        if (!characteristic) return;
+
+        if (selectedCharacteristics.has(characteristic)) {
+            selectedCharacteristics.delete(characteristic);
+            button.classList.remove('selected');
         } else {
-          appendAiMessage(chatWindow, personaName, data.error || "⚠️ There was a problem connecting to the persona.");
+            selectedCharacteristics.add(characteristic);
+            button.classList.add('selected');
         }
-      } catch (err) {
-        console.error("Chat API error:", err);
-        typingBubble.remove();
-        appendAiMessage(chatWindow, personaName, "⚠️ There was a problem connecting to the persona. Try again later.");
-      }
-    });
-  }
-
-  function appendUserMessage(container, text) {
-    const block = document.createElement("div");
-    block.className = "chat-message user-message fade-in";
-    block.innerHTML = `
-      <div class="message-avatar">🧑</div>
-      <div class="message-content">
-        <p class="message-text">${escapeHtml(text)}</p>
-      </div>
-    `;
-    container.appendChild(block);
-    container.scrollTop = container.scrollHeight;
-  }
-
-  function appendAiMessage(container, personaName, text) {
-    const block = document.createElement("div");
-    block.className = "chat-message ai-message fade-in";
-    block.innerHTML = `
-      <div class="message-avatar">${escapeHtml(personaName.charAt(0))}</div>
-      <div class="message-content"><p class="message-text"></p></div>
-    `;
-    container.appendChild(block);
-
-    const target = block.querySelector(".message-text");
-    typeMessage(text, target);
-    container.scrollTop = container.scrollHeight;
-  }
-
-  function createTypingBubble(personaName) {
-    const typingBubble = document.createElement("div");
-    typingBubble.className = "chat-message ai-message fade-in";
-    typingBubble.innerHTML = `
-      <div class="message-avatar">${escapeHtml(personaName.charAt(0))}</div>
-      <div class="message-content typing-indicator">
-        <span>.</span><span>.</span><span>.</span>
-      </div>
-    `;
-    return typingBubble;
-  }
-
-  function typeMessage(text, target) {
-    if (!target) return;
-    let index = 0;
-    const max = text.length;
-    const interval = setInterval(() => {
-      target.innerHTML += escapeHtml(text.charAt(index));
-      index += 1;
-      if (index >= max) clearInterval(interval);
-    }, 20);
-  }
-
-  function startCall(personaName) {
-    alert(`Simulating a live call with ${personaName}.`); // Placeholder for future integration
-  }
-
-  function showError(message) {
-    const el = document.getElementById("error");
-    if (!el) return;
-    el.textContent = message;
-    el.classList.add("show");
-  }
-
-  function clearError() {
-    const el = document.getElementById("error");
-    if (!el) return;
-    el.textContent = "";
-    el.classList.remove("show");
-  }
+    }
 
   function escapeHtml(text) {
     const div = document.createElement("div");
